@@ -96,15 +96,21 @@ class Mint():
     def update_transaction(self,
                            transaction_id,
                            description=None,
-                           category_id=None,
+                           category_id=None, category_name=None,
                            note=None,
                            transaction_date: date = None,
                            tags: Mapping[str, bool] = {}) -> dict:
         '''
-        transaction_id can be obtained from get_transactions() and category_id can be obtained from category_name_to_id(...)
+        transaction_id can be obtained from get_transactions()
 
         To add/remove tag, pass tags={'tag_name': True/False}. Tags not present in tag will remain unchanged.
+
+        Only one of category_name and category_id is needed (category_id takes priority). Usually category_name
+        suffices, unless there are multiple categories with the same name (but under different parent categories).
         '''
+        if not category_id and category_name:
+            category_id = self.category_name_to_id(category_name)
+
         data = {
             'task': 'txnedit', 'token': self._js_token,
             'txnId': '{}:0'.format(transaction_id),
@@ -118,15 +124,28 @@ class Mint():
 
         return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
 
-    def add_cash_transaction(self, description, amount,
-                             category_id=None, note=None, transaction_date=None, is_expense=True,
+    def add_cash_transaction(self,
+                             description: str,
+                             amount: float,
+                             category_id=None, category_name=None,
+                             note: str = None,
+                             transaction_date: date = None,
                              tags: Seq[str] = []) -> dict:
+        '''
+        If amount if positive, transaction will be created as an income. Else, it is created as an expense.
+
+        Only one of category_name and category_id is needed (category_id takes priority). Usually category_name
+        suffices, unless there are multiple categories with the same name (but under different parent categories).
+        '''
+        if not category_id and category_name:
+            category_id = self.category_name_to_id(category_name)
+
         data = {'txnId': ':0', 'task': 'txnadd', 'token': self._js_token, 'mtType': 'cash',
                 'mtCashSplitPref': 2,  # unclear what this is
                 'note': note,
                 'catId': category_id,
-                'amount': amount,
-                'mtIsExpense': is_expense,
+                'amount': abs(amount),
+                'mtIsExpense': True if amount < 0 else False,
                 'merchant': description,
                 'date': (transaction_date or date.today()).strftime('%m/%d/%Y')}
 
@@ -155,6 +174,9 @@ class Mint():
 
     def category_name_to_id(self, category_name, parent_category_name=None) -> int:
         categories = self.get_categories()
+        if not parent_category_name and sum(1 for c in categories if c['name'] == category_name) > 1:
+            raise RuntimeError('Multiple categories with the same name {} is found. Need to supply parent category name'.format(category_name))
+
         return next((c['id'] for c in categories if c['name'] == category_name and
                      (not parent_category_name or c['parent']['name'] == parent_category_name)), None)
 
