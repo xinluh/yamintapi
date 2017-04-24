@@ -8,7 +8,7 @@ import random
 from itertools import islice
 from functools import lru_cache
 from datetime import date
-from typing import Sequence as Seq
+from typing import Sequence as Seq, Mapping
 
 _USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9) AppleWebKit/537.71 (KHTML, like Gecko) Version/7.0 Safari/537.71'
 _MINT_ROOT_URL = 'https://mint.intuit.com'
@@ -78,9 +78,17 @@ class Mint():
         return self.session.get(os.path.join(_MINT_ROOT_URL, 'transactionDownload.event') +
                                 ('?accountId=0' if include_investment else '')).content
 
-    def update_transaction(self, transaction_id, description=None, category_id=None, note=None, transaction_date: date = None) -> dict:
+    def update_transaction(self,
+                           transaction_id,
+                           description=None,
+                           category_id=None,
+                           note=None,
+                           transaction_date: date = None,
+                           tags: Mapping[str, bool] = {}) -> dict:
         '''
         transaction_id can be obtained from get_transactions() and category_id can be obtained from category_name_to_id(...)
+
+        To add/remove tag, pass tags={'tag_name': True/False}. Tags not present in tag will remain unchanged.
         '''
         data = {
             'task': 'txnedit', 'token': self._js_token,
@@ -90,9 +98,14 @@ class Mint():
             'catId': category_id,
             'date': transaction_date.strftime('%m/%d/%Y') if transaction_date else None,
         }
-        return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v})
+        for tag, checked in tags.items():
+            data['tag{}'.format(self.get_tag_id_from_name(tag))] = 2 if checked else 0
 
-    def add_cash_transaction(self, description, amount, category_id=None, note=None, transaction_date=None, is_expense=True) -> dict:
+        return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
+
+    def add_cash_transaction(self, description, amount,
+                             category_id=None, note=None, transaction_date=None, is_expense=True,
+                             tags: Seq[str] = []) -> dict:
         data = {'txnId': ':0', 'task': 'txnadd', 'token': self._js_token, 'mtType': 'cash',
                 'mtCashSplitPref': 2,  # unclear what this is
                 'note': note,
@@ -101,6 +114,11 @@ class Mint():
                 'mtIsExpense': is_expense,
                 'merchant': description,
                 'date': (transaction_date or date.today()).strftime('%m/%d/%Y')}
+
+        for tag in tags:
+            data['tag{}'.format(self.get_tag_id_from_name(tag))] = 2
+
+        data.update()
         return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v})
 
     @lru_cache()
@@ -125,11 +143,32 @@ class Mint():
         return next((c['id'] for c in categories if c['name'] == category_name and
                      (not parent_category_name or c['parent']['name'] == parent_category_name)), None)
 
-    def get_tags(self) -> Seq[dict]:
+    @lru_cache()
+    def get_tags(self) -> dict:
+        ''' Return dict keyed by tag name, values are more information about the tag (including id) '''
+
+        # alternative api with less detail: list(self._get_jsondata_response_generator({'task': 'tags'}))
         data = {"args": {},
                 "service": "MintTransactionService",
                 "task": "getTagsByFrequency"}
-        return self._get_service_response(data)
+        return {t['name']: t for t in self._get_service_response(data)}
+
+    def get_tag_id_from_name(self, name) -> int:
+        tag_id = self.get_tags().get(name, {}).get('id', None)
+        if not tag_id:
+            raise RuntimeError('Tag {} does not exist. Create it first with create_tag()'.format(name))
+        return tag_id
+
+    def create_tag(self, name) -> int:
+        ''' Return the id of newly created tag'''
+        if name in self.get_tags():
+            raise Exception('{} is already a tag'.format(name))
+        data = {'nameOfTag': name, 'task': 'C', 'token': self._js_token}
+        result = self.session.post(os.path.join(_MINT_ROOT_URL, '/updateTag.xevent'), data=data).text
+        try:
+            return int(re.match(r'<tagId>([0-9]+)</tagId>', result)[1])
+        except TypeError:
+            raise RuntimeError('Received unexpected response ' + result)
 
     def set_user_property(self, name, value) -> bool:
         params = {'args': {'propertyName': name,
@@ -190,6 +229,7 @@ class Mint():
 
         self.get_accounts.cache_clear()
         self.get_categories.cache_clear()
+        self.get_tags.cache_clear()
         return self
 
     @property
