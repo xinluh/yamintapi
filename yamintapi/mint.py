@@ -164,6 +164,7 @@ class Mint():
         if debug:
             print('Waiting for login page to load...')
 
+        driver.find_element_by_id("ius-userid").click()
         driver.find_element_by_id("ius-userid").send_keys(email)
         driver.find_element_by_id("ius-password").send_keys(password)
         driver.find_element_by_id("ius-sign-in-submit-btn").submit()
