@@ -7,7 +7,7 @@ import os
 import random
 from itertools import islice
 from functools import lru_cache
-from datetime import date
+from datetime import datetime, date
 from typing import Sequence as Seq, Mapping
 
 _USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9) AppleWebKit/537.71 (KHTML, like Gecko) Version/7.0 Safari/537.71'
@@ -51,7 +51,7 @@ class Mint():
 
         return self._get_service_response(params)
 
-    def get_transactions(self, include_investment=True, limit=None) -> Seq[dict]:
+    def get_transactions(self, include_investment=True, limit=None, do_basic_cleaning=True) -> Seq[dict]:
         '''
         Return detailed transactions. Suggest running with e.g. get_transactions(limit=100) since getting all transactions is
         a slow operation.
@@ -66,7 +66,22 @@ class Mint():
             params['filterType'] = 'cash'
 
         transactions = self._get_jsondata_response_generator(params)
-        return list(islice(transactions, limit) if limit else transactions)
+        transactions = (islice(transactions, limit) if limit else transactions)
+        if not do_basic_cleaning:
+            return list(transactions)
+
+        def fix_date(date_str):
+            # Mint returns dates like 'Feb 23' for transactions in the current year; reformat to standard date instead
+            return (date_str if '/' in date_str
+                    else datetime.strptime(date_str + str(date.today().year), '%b %d%Y').strftime('%m/%d/%y'))
+
+        def clean_up(trans):
+            for date_key in ('date', 'odate'):
+                trans[date_key] = fix_date(trans[date_key])
+            trans['amount'] = float(trans['amount'].strip('$').replace(',', '')) * (-1 if trans['isDebit'] else 1)
+            return trans
+
+        return list(map(clean_up, transactions))
 
     def get_transactions_csv(self, include_investment=True) -> str:
         '''
