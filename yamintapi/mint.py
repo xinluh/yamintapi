@@ -233,10 +233,12 @@ class Mint():
         while True:
             params['offset'] = offset
             params['rnd'] = random.randint(0, 10**14)
-            results = self._get_json_response('getJsonData.xevent', params=params, method='get')['set'][0].get('data', [])
+            results = self._get_json_response('app/getJsonData.xevent', params=params, method='get')['set'][0].get('data', [])
             offset += len(results)
             for result in results:
                 yield result
+            if not results:
+                break
 
     def _two_factor_login(sel, driver: 'selenium.webdriver'):
         driver.find_element_by_id('ius-mfa-option-email').click()
