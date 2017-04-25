@@ -16,8 +16,8 @@ _MINT_ROOT_URL = 'https://mint.intuit.com'
 
 class Mint():
     def __init__(self):
-        self.session = requests.Session()
         self._js_token = None
+        self.session = requests.Session()
         self.session.headers.update({'User-Agent': _USER_AGENT})
 
     def initiate_account_refresh(self):
@@ -28,16 +28,11 @@ class Mint():
         Returns None if timed out.
         """
         self.initiate_account_refresh()
-        waited = 0
-        while True:
+        for _ in range(max_wait_time//refresh_every):
             data = self._get_json_response('userStatus.xevent', params={'rnd': random.randint(0, 10**14)}, method='get')
             if data['isRefreshing'] is False:
                 return data
-            elif waited > max_wait_time/refresh_every:
-                return None
-            else:
-                waited += 1
-                time.sleep(refresh_every)
+            time.sleep(refresh_every)
 
     @lru_cache()
     def get_accounts(self) -> Seq[dict]:
@@ -48,7 +43,6 @@ class Mint():
             'service': 'MintAccountService',
             'task': 'getAccountsSorted'
         }
-
         return self._get_service_response(params)
 
     def get_transactions(self, include_investment=True, limit=None, do_basic_cleaning=True) -> Seq[dict]:
@@ -94,16 +88,16 @@ class Mint():
                                 ('?accountId=0' if include_investment else '')).content
 
     def update_transaction(self,
-                           transaction_id,
-                           description=None,
-                           category_id=None, category_name=None,
-                           note=None,
+                           transaction_id: int,
+                           description: str = None,
+                           category_name: str = None, category_id: int = None,
+                           note: str = None,
                            transaction_date: date = None,
                            tags: Mapping[str, bool] = {}) -> dict:
         '''
         transaction_id can be obtained from get_transactions()
 
-        To add/remove tag, pass tags={'tag_name': True/False}. Tags not present in tag will remain unchanged.
+        To add/remove tag, pass `tags={'tag_name': True/False}`. Tags not present in `tags` will remain unchanged.
 
         Only one of category_name and category_id is needed (category_id takes priority). Usually category_name
         suffices, unless there are multiple categories with the same name (but under different parent categories).
@@ -119,15 +113,16 @@ class Mint():
             'catId': category_id,
             'date': transaction_date.strftime('%m/%d/%Y') if transaction_date else None,
         }
+
         for tag, checked in tags.items():
-            data['tag{}'.format(self.get_tag_id_from_name(tag))] = 2 if checked else 0
+            data['tag{}'.format(self.tag_name_to_id(tag))] = 2 if checked else 0
 
         return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
 
     def add_cash_transaction(self,
                              description: str,
                              amount: float,
-                             category_id=None, category_name=None,
+                             category_name: str = None, category_id: int = None,
                              note: str = None,
                              transaction_date: date = None,
                              tags: Seq[str] = []) -> dict:
@@ -150,9 +145,8 @@ class Mint():
                 'date': (transaction_date or date.today()).strftime('%m/%d/%Y')}
 
         for tag in tags:
-            data['tag{}'.format(self.get_tag_id_from_name(tag))] = 2
+            data['tag{}'.format(self.tag_name_to_id(tag))] = 2
 
-        data.update()
         return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v})
 
     @lru_cache()
@@ -168,17 +162,17 @@ class Mint():
         }
         return self._get_service_response(data)['allCategories']
 
-    def category_id_to_name(self, category_id) -> str:
-        categories = self.get_categories()
-        return next((c['name'] for c in categories if c['id'] == category_id), None)
-
     def category_name_to_id(self, category_name, parent_category_name=None) -> int:
         categories = self.get_categories()
         if not parent_category_name and sum(1 for c in categories if c['name'] == category_name) > 1:
             raise RuntimeError('Multiple categories with the same name {} is found. Need to supply parent category name'.format(category_name))
 
-        return next((c['id'] for c in categories if c['name'] == category_name and
-                     (not parent_category_name or c['parent']['name'] == parent_category_name)), None)
+        res = next((c['id'] for c in categories if c['name'] == category_name and
+                    (not parent_category_name or c['parent']['name'] == parent_category_name)), None)
+
+        if not res:
+            raise RuntimeError('category {} does not exist'.format(category_name))
+        return res
 
     @lru_cache()
     def get_tags(self) -> dict:
@@ -190,7 +184,7 @@ class Mint():
                 "task": "getTagsByFrequency"}
         return {t['name']: t for t in self._get_service_response(data)}
 
-    def get_tag_id_from_name(self, name) -> int:
+    def tag_name_to_id(self, name) -> int:
         tag_id = self.get_tags().get(name, {}).get('id', None)
         if not tag_id:
             raise RuntimeError('Tag {} does not exist. Create it first with create_tag()'.format(name))
@@ -242,7 +236,9 @@ class Mint():
 
         driver.find_element_by_id("ius-userid").click()
         driver.find_element_by_id("ius-userid").send_keys(email)
+        time.sleep(2)
         driver.find_element_by_id("ius-password").send_keys(password)
+        time.sleep(2)
         driver.find_element_by_id("ius-sign-in-submit-btn").submit()
         if debug:
             print('Logging in...')
