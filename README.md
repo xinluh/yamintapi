@@ -34,6 +34,7 @@ mint.get_accounts()
 mint.get_categories()
 mint.get_tags()
 ```
+The results of these calls are cached. To clear the cache, just call `mint.login(...)` again.
 
 ### Get transactions
 ```python
@@ -59,16 +60,16 @@ transactions = pd.read_csv(io.StringIO(csv_string))
 ```
 
 ### Change/add transactions
-Change description of the first transaction
+Change description, add `tag1` and remove `tag2` to the newest transaction
 ```python
 trans_id = mint.get_transactions(limit=1)[0]['id']
-mint.update_transaction(trans_id, description='new description')
+mint.update_transaction(trans_id, description='new description', tags={'tag1': True, 'tag2: False'})
 ```
+Tags should already exist. If not, you can create with `mint.add_tag(tag_name)`.
 
 Add a cash transaction (default to today)
 ```python
-category_id = mint.category_name_to_id('Restaurants')  
-mint.add_cash_transaction('dinner', amount=10.0, category_id=category_id)
+mint.add_cash_transaction('dinner', amount=-10.0, category_name='Restaurants', tags=['tag1', 'tag2'])
 ```
 
 ## See also
