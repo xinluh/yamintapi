@@ -9,6 +9,9 @@ from itertools import islice
 from functools import lru_cache
 from datetime import datetime, date
 from typing import Sequence as Seq, Mapping
+import logging
+
+logger  = logging.getLogger(__name__)
 
 _USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9) AppleWebKit/537.71 (KHTML, like Gecko) Version/7.0 Safari/537.71'
 _MINT_ROOT_URL = 'https://mint.intuit.com'
@@ -219,43 +222,60 @@ class Mint():
 
         '''
         from selenium import webdriver
+        from selenium.common.exceptions import ElementNotVisibleException, NoSuchElementException
         webdriver.DesiredCapabilities.PHANTOMJS['phantomjs.page.customHeaders.User-Agent'] = _USER_AGENT
         webdriver.DesiredCapabilities.PHANTOMJS['phantomjs.page.settings.userAgent'] = _USER_AGENT
 
         driver = webdriver.PhantomJS()
         if debug:
             self._driver = driver
-        driver.set_window_size(1120, 550)
+        driver.set_window_size(1280, 768)
         driver.implicitly_wait(30)
 
         overview_url = os.path.join(_MINT_ROOT_URL, 'overview.event')
         driver.get(overview_url)
 
-        if debug:
-            print('Waiting for login page to load...')
+        logger.info('Waiting for login page to load...')
 
-        driver.find_element_by_id("ius-userid").click()
-        driver.find_element_by_id("ius-userid").send_keys(email)
+        for i in range(10):
+            try:
+                driver.find_element_by_id("ius-userid").click()
+                driver.find_element_by_id("ius-userid").send_keys(email)
+                break
+            except ElementNotVisibleException as e:
+                time.sleep(1)
+                logger.debug('Waiting for userid button to be clickable')
+
         time.sleep(2)
         driver.find_element_by_id("ius-password").send_keys(password)
         time.sleep(2)
         driver.find_element_by_id("ius-sign-in-submit-btn").submit()
-        if debug:
-            print('Logging in...')
+        logger.info('Logging in...')
 
         while not driver.current_url.startswith(overview_url):
             if 'a code to verify your info' in driver.page_source:
                 self._two_factor_login(driver)
+
+            if 'your phone number to help recover your account' in driver.page_source:
+                logger.info('Skipping phone verification step')
+                try:
+                    for i in range(10):
+                        try:
+                            driver.find_element_by_id("ius-verified-user-update-btn-skip").click()
+                            break
+                        except ElementNotVisibleException as e:
+                            time.sleep(1)
+                            logger.debug('Waiting for skipping button to be clickable')
+                except NoSuchElementException:
+                    pass
+
             time.sleep(1)
-            if debug:
-                print(driver.current_url)
+            logger.info('Current page title: ' + driver.title)
 
         self._js_token = json.loads(driver.find_element_by_id('javascript-user').get_attribute('value'))['token']
 
-        new_cookies = requests.cookies.RequestsCookieJar()
         for cookie_json in driver.get_cookies():
-            new_cookies.set(**{k: v for k, v in cookie_json.items() if k not in ['httponly', 'expiry', 'expires', 'domain']})
-        self.session.cookies = new_cookies
+            self.session.cookies.set(**{k: v for k, v in cookie_json.items() if k not in ['httponly', 'expiry', 'expires', 'domain']})
 
         if not debug:
             driver.close()
