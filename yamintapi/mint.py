@@ -256,7 +256,7 @@ class Mint():
             if 'a code to verify your info' in driver.page_source:
                 self._two_factor_login(driver)
 
-            if 'your phone number to help recover your account' in driver.page_source:
+            if 'ius-verified-user-update-btn-skip' in driver.page_source:
                 logger.info('Skipping phone verification step')
                 try:
                     for i in range(10):
