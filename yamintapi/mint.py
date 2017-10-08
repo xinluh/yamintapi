@@ -166,12 +166,13 @@ class Mint():
         return self._get_service_response(data)['allCategories']
 
     def category_name_to_id(self, category_name, parent_category_name=None) -> int:
-        categories = self.get_categories()
-        if not parent_category_name and sum(1 for c in categories if c['name'] == category_name) > 1:
-            raise RuntimeError('Multiple categories with the same name {} is found. Need to supply parent category name'.format(category_name))
+        categories = [c for c in self.get_categories() if c['name'] == category_name]
+        if not parent_category_name and len(categories) > 1:
+            raise RuntimeError('Multiple categories with the same name {} is found. '.format(category_name) +
+                               'Need to supply parent category name: {}'.format({c['parent']['name'] for c in categories}))
 
-        res = next((c['id'] for c in categories if c['name'] == category_name and
-                    (not parent_category_name or c['parent']['name'] == parent_category_name)), None)
+        res = next((c['id'] for c in categories
+                    if not parent_category_name or c['parent']['name'] == parent_category_name), None)
 
         if not res:
             raise RuntimeError('category {} does not exist'.format(category_name))
