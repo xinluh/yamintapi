@@ -227,7 +227,9 @@ class Mint():
         webdriver.DesiredCapabilities.PHANTOMJS['phantomjs.page.customHeaders.User-Agent'] = _USER_AGENT
         webdriver.DesiredCapabilities.PHANTOMJS['phantomjs.page.settings.userAgent'] = _USER_AGENT
 
-        driver = webdriver.PhantomJS()
+        # PhantomJS sometimes is wonky with SSL and returns an empty page:
+        # https://stackoverflow.com/questions/29463603/phantomjs-returning-empty-web-page-python-selenium
+        driver = webdriver.PhantomJS(service_args=['--ssl-protocol=TLSv1', '--ignore-ssl-errors=true'])
         if debug:
             self._driver = driver
         driver.set_window_size(1280, 768)
