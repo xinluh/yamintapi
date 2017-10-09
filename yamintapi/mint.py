@@ -238,42 +238,41 @@ class Mint():
         overview_url = os.path.join(_MINT_ROOT_URL, 'overview.event')
         driver.get(overview_url)
 
+        def wait_and_click_by_id(elem_id, timeout=10, check_freq=1):
+            ''' more debug message and finer control over selenium's wait functionality '''
+            for _ in range(timeout // check_freq):
+                try:
+                    element = driver.find_element_by_id(elem_id)
+                    if element.is_displayed and element.is_enabled:
+                        element.click()
+                        return element
+                except NoSuchElementException:
+                    pass
+                time.sleep(check_freq)
+                logger.debug('Waiting for id={} to be clickable'.format(elem_id))
+            return element
+
         logger.info('Waiting for login page to load...')
 
-        for i in range(10):
-            try:
-                driver.find_element_by_id("ius-userid").click()
-                driver.find_element_by_id("ius-userid").send_keys(email)
-                break
-            except ElementNotVisibleException as e:
-                time.sleep(1)
-                logger.debug('Waiting for userid button to be clickable')
+        wait_and_click_by_id('ius-userid').send_keys(email)
+        wait_and_click_by_id('ius-password').send_keys(password)
+        wait_and_click_by_id('ius-sign-in-submit-btn')
 
-        time.sleep(2)
-        driver.find_element_by_id("ius-password").send_keys(password)
-        time.sleep(2)
-        driver.find_element_by_id("ius-sign-in-submit-btn").submit()
         logger.info('Logging in...')
-
         while not driver.current_url.startswith(overview_url):
             if 'a code to verify your info' in driver.page_source:
                 self._two_factor_login(driver)
 
-            if 'ius-verified-user-update-btn-skip' in driver.page_source:
-                logger.info('Skipping phone verification step')
-                try:
-                    for i in range(10):
-                        try:
-                            driver.find_element_by_id("ius-verified-user-update-btn-skip").click()
-                            break
-                        except ElementNotVisibleException as e:
-                            time.sleep(1)
-                            logger.debug('Waiting for skipping button to be clickable')
-                except NoSuchElementException:
-                    pass
+            try:
+                element = driver.find_element_by_id('ius-verified-user-update-btn-skip')
+                if element.is_displayed and element.is_enabled:
+                    element.click()
+                    logger.info('Skipping phone verification step')
+            except (NoSuchElementException, ElementNotVisibleException):
+                pass
 
-            time.sleep(1)
-            logger.info('Current page title: ' + driver.title)
+            time.sleep(2)
+            logger.debug('Current page title: ' + driver.title)
 
         self._js_token = json.loads(driver.find_element_by_id('javascript-user').get_attribute('value'))['token']
 
@@ -337,10 +336,12 @@ class Mint():
                 break
 
     def _two_factor_login(sel, driver: 'selenium.webdriver'):
+        driver.implicitly_wait(3)
         driver.find_element_by_id('ius-mfa-option-email').click()
         driver.find_element_by_id('ius-mfa-options-submit-btn').click()
         driver.find_element_by_id('ius-mfa-confirm-code').send_keys(getpass.getpass('Enter 2 factor code sent to your email: '))
         driver.find_element_by_id('ius-mfa-otp-submit-btn').click()
+        driver.implicitly_wait(0)
 
 
 class MintSessionExpiredException(Exception):
