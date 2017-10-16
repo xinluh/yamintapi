@@ -233,7 +233,7 @@ class Mint():
         if debug:
             self._driver = driver
         driver.set_window_size(1280, 768)
-        driver.implicitly_wait(30)
+        driver.implicitly_wait(0)
 
         overview_url = os.path.join(_MINT_ROOT_URL, 'overview.event')
         driver.get(overview_url)
@@ -253,13 +253,26 @@ class Mint():
             return element
 
         logger.info('Waiting for login page to load...')
-
         wait_and_click_by_id('ius-userid').send_keys(email)
         wait_and_click_by_id('ius-password').send_keys(password)
         wait_and_click_by_id('ius-sign-in-submit-btn')
 
+        def get_js_token(driver):
+            if driver.current_url.startswith(overview_url):
+                try:
+                    user_elem = driver.find_element_by_id('javascript-user')
+                except NoSuchElementException:
+                    return None
+                else:
+                    return json.loads(user_elem.get_attribute('value') or {}).get('token')
+
         logger.info('Logging in...')
-        while not driver.current_url.startswith(overview_url):
+        for _ in range(10):
+            self._js_token = get_js_token(driver)
+
+            if self._js_token:
+                break
+
             if 'a code to verify your info' in driver.page_source:
                 self._two_factor_login(driver)
 
@@ -274,7 +287,8 @@ class Mint():
             time.sleep(2)
             logger.debug('Current page title: ' + driver.title)
 
-        self._js_token = json.loads(driver.find_element_by_id('javascript-user').get_attribute('value'))['token']
+        if not self._js_token:
+            raise RuntimeError('Failed to get js token from overview page')
 
         for cookie_json in driver.get_cookies():
             self.session.cookies.set(**{k: v for k, v in cookie_json.items() if k not in ['httponly', 'expiry', 'expires', 'domain']})
