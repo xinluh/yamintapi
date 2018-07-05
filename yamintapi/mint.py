@@ -224,12 +224,11 @@ class Mint():
         '''
         from selenium import webdriver
         from selenium.common.exceptions import ElementNotVisibleException, NoSuchElementException
-        webdriver.DesiredCapabilities.PHANTOMJS['phantomjs.page.customHeaders.User-Agent'] = _USER_AGENT
-        webdriver.DesiredCapabilities.PHANTOMJS['phantomjs.page.settings.userAgent'] = _USER_AGENT
 
-        # PhantomJS sometimes is wonky with SSL and returns an empty page:
-        # https://stackoverflow.com/questions/29463603/phantomjs-returning-empty-web-page-python-selenium
-        driver = webdriver.PhantomJS(service_args=['--ssl-protocol=TLSv1', '--ignore-ssl-errors=true'])
+        options = webdriver.ChromeOptions()
+        options.add_argument('headless')
+
+        driver = webdriver.Chrome(chrome_options=options)
         if debug:
             self._driver = driver
         driver.set_window_size(1280, 768)
@@ -250,7 +249,7 @@ class Mint():
                     pass
                 time.sleep(check_freq)
                 logger.debug('Waiting for id={} to be clickable'.format(elem_id))
-            return element
+            raise Exception('Fail to find id={} to click on'.format(elem_id))
 
         logger.info('Waiting for login page to load...')
         wait_and_click_by_id('ius-userid').send_keys(email)
@@ -291,7 +290,7 @@ class Mint():
             raise RuntimeError('Failed to get js token from overview page')
 
         for cookie_json in driver.get_cookies():
-            self.session.cookies.set(**{k: v for k, v in cookie_json.items() if k not in ['httponly', 'expiry', 'expires', 'domain']})
+            self.session.cookies.set(**{k: v for k, v in cookie_json.items() if k not in ['httpOnly', 'expiry', 'expires', 'domain']})
 
         if not debug:
             driver.close()
