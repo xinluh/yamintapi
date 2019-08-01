@@ -272,8 +272,11 @@ class Mint():
             if self._js_token:
                 break
 
-            if 'a code to verify your info' in driver.page_source:
+            try:
+                driver.find_element_by_id('ius-mfa-options-submit-btn')
                 self._two_factor_login(driver)
+            except (NoSuchElementException, ElementNotVisibleException):
+                pass
 
             try:
                 element = driver.find_element_by_id('ius-verified-user-update-btn-skip')
@@ -287,7 +290,8 @@ class Mint():
             logger.debug('Current page title: ' + driver.title)
 
         if not self._js_token:
-            raise RuntimeError('Failed to get js token from overview page')
+            driver.get_screenshot_as_file('/tmp/mint_login_failed.png')
+            raise RuntimeError('Failed to get js token from overview page; screenshot output to /tmp/mint_login_failed.png')
 
         for cookie_json in driver.get_cookies():
             self.session.cookies.set(**{k: v for k, v in cookie_json.items() if k not in ['httpOnly', 'expiry', 'expires', 'domain']})
