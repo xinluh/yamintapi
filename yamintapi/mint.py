@@ -212,7 +212,7 @@ class Mint():
                   'task': 'setUserProperty'}
         return self._get_service_response(params)
 
-    def login(self, email, password, debug=False) -> 'Mint':
+    def login(self, email, password, get_two_factor_code_func=None, debug=False) -> 'Mint':
         '''Use selenium + phantomjs to get login cookies and token.
 
         You should run this function interactively at least once so you can supply the 2 factor authentication
@@ -274,7 +274,7 @@ class Mint():
 
             try:
                 driver.find_element_by_id('ius-mfa-options-submit-btn')
-                self._two_factor_login(driver)
+                self._two_factor_login(get_two_factor_code_func, driver)
             except (NoSuchElementException, ElementNotVisibleException):
                 pass
 
@@ -352,11 +352,21 @@ class Mint():
             if not results:
                 break
 
-    def _two_factor_login(sel, driver: 'selenium.webdriver'):
+    def _two_factor_login(sel, get_two_factor_code_func, driver: 'selenium.webdriver'):
+        if not get_two_factor_code_func:
+            raise Exception('2 factor login is required but `get_two_factor_code_func` is not provided.\n'
+                            'Try e.g. mint.login(..., get_two_factor_code_func=lambda: getpass.getpass("Enter 2 factor code sent to your email: "))')
+
         driver.implicitly_wait(3)
         driver.find_element_by_id('ius-mfa-option-email').click()
         driver.find_element_by_id('ius-mfa-options-submit-btn').click()
-        driver.find_element_by_id('ius-mfa-confirm-code').send_keys(getpass.getpass('Enter 2 factor code sent to your email: '))
+
+        logger.info('Waiting for two factor code...')
+        two_factor_code = get_two_factor_code_func()
+
+        logger.info('Sending two factor code:', two_factor_code)
+        driver.find_element_by_id('ius-mfa-confirm-code').send_keys(two_factor_code)
+
         driver.find_element_by_id('ius-mfa-otp-submit-btn').click()
         driver.implicitly_wait(0)
 
