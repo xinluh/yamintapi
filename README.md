@@ -128,6 +128,9 @@ function forwardMintMail() {
 }
 ```
 
+The process in sequence diagram:
+![image](https://user-images.githubusercontent.com/9114601/87220979-985b6c00-c336-11ea-941a-094fc46abb09.png)
+
 
 ## See also
 
