@@ -294,7 +294,8 @@ class Mint():
             raise RuntimeError('Failed to get js token from overview page; screenshot output to /tmp/mint_login_failed.png')
 
         for cookie_json in driver.get_cookies():
-            self.session.cookies.set(**{k: v for k, v in cookie_json.items() if k not in ['httpOnly', 'expiry', 'expires', 'domain']})
+            self.session.cookies.set(**{k: v for k, v in cookie_json.items()
+                                        if k not in ['httpOnly', 'expiry', 'expires', 'domain', 'sameSite']})
 
         if not debug:
             driver.close()
