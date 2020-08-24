@@ -10,7 +10,7 @@ import random
 from itertools import islice
 from functools import lru_cache
 from datetime import datetime, date
-from typing import Sequence as Seq, Mapping
+from typing import Sequence as Seq, Mapping, Union, List
 import logging
 
 logger  = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ class Mint():
                                 ('?accountId=0' if include_investment else '')).content
 
     def update_transaction(self,
-                           transaction_id: int,
+                           transaction_id: Union[int, List[int]],
                            description: str = None,
                            category_name: str = None, category_id: int = None,
                            note: str = None,
@@ -133,13 +133,16 @@ class Mint():
         if not category_id and category_name:
             category_id = self.category_name_to_id(category_name)
 
-        category_name = next((c['name'] for c in m.get_categories() if c['id'] == category_id), None)
-        if not category_name:
-            raise ValueError('{} is not a valid category id'.format(category_id))
+        if category_id is not None:
+            category_name = next((c['name'] for c in self.get_categories() if c['id'] == category_id), None)
+            if not category_name:
+                raise ValueError('{} is not a valid category id'.format(category_id))
+
+        trans_ids = transaction_id if isinstance(transaction_id, list) else [transaction_id]
 
         data = {
             'task': 'txnedit', 'token': self._js_token,
-            'txnId': '{}:0'.format(transaction_id),
+            'txnId': ','.join(['{}:0'.format(i) for i in trans_ids]),
             'note': note,
             'merchant': description,
             'catId': category_id,
@@ -151,8 +154,12 @@ class Mint():
             data['tag{}'.format(self.tag_name_to_id(tag))] = 2 if checked else 0
 
         resp = self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
+        success = resp.get('task') == 'txnEdit'
 
-        return resp.get('task') == 'txnedit'
+        if not success:
+            logger.error('update_transaction failed,resp: {}'.format(resp))
+
+        return success
 
     def add_cash_transaction(self,
                              description: str,
@@ -356,9 +363,12 @@ class Mint():
                 self._js_token = cached['js_token']
                 self.session.cookies = cached['cookies']
 
-                if self.is_logged_in(check=True):
-                    logger.info('Using cached login')
-                    return self
+                try:
+                    if self.is_logged_in(check=True):
+                        logger.info('Using cached login')
+                        return self
+                except MintSessionExpiredException:
+                    pass
 
         self.login(email, password, get_two_factor_code_func=get_two_factor_code_func, debug=debug)
 
