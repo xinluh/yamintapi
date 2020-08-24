@@ -119,6 +119,7 @@ class Mint():
                            transaction_id: Union[int, List[int]],
                            description: str = None,
                            category_name: str = None, category_id: int = None,
+                           is_duplicate: bool = None,
                            note: str = None,
                            transaction_date: date = None,
                            tags: Mapping[str, bool] = {}) -> bool:
@@ -148,18 +149,49 @@ class Mint():
             'catId': category_id,
             'category': category_name,
             'date': transaction_date.strftime('%m/%d/%Y') if transaction_date else None,
+            'duplicate': 'on' if is_duplicate == True else None,
         }
 
         for tag, checked in tags.items():
             data['tag{}'.format(self.tag_name_to_id(tag))] = 2 if checked else 0
 
-        resp = self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
+        params = {k: v for k, v in data.items() if v is not None}
+        logger.info('update_transaction {}'.format(params))
+
+        resp = self._get_json_response('updateTransaction.xevent', data=params)
         success = resp.get('task') == 'txnEdit'
 
         if not success:
             logger.error('update_transaction failed,resp: {}'.format(resp))
 
         return success
+
+    def delete_transaction(self, transaction_id: int) -> bool:
+        trans = self.get_transaction_by_id(transaction_id)
+
+        if not trans['isPending'] and not trans['fi'] == 'Cash':
+            raise RuntimeError('transacation_id {} is not a pending or cash transaction. Probably not a good idea to delete'.format(transaction_id))
+
+        resp = self._get_json_response('updateTransaction.xevent', data={
+            'task': 'delete',
+            'txnId': '{}:0'.format(transaction_id),
+            'token': self._js_token,
+        })
+
+        return resp.get('task') == 'delete'
+
+    def get_transaction_by_id(self, transaction_id: int):
+        res = self._get_json_response('listSplitTransactions.xevent', {
+            'txnId': '{}:0'.format(transaction_id)
+        }, method='get')
+
+        if 'parent' not in res or 'children' not in res:
+            raise RuntimeError('Unexpected output from listSplitTransactions: {}'.format(res))
+
+        if res['parent'][0]['id'] == transaction_id:
+            return res['parent'][0]
+        else:
+            return next((t for t in res['children'] if t['id'] == transaction_id), None)
 
     def add_cash_transaction(self,
                              description: str,
