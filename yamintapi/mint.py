@@ -456,7 +456,7 @@ class Mint():
         logger.info('Waiting for two factor code...')
         two_factor_code = get_two_factor_code_func()
 
-        logger.info('Sending two factor code:', two_factor_code)
+        logger.info('Sending two factor code: {}'.format(two_factor_code))
         driver.find_element_by_id('ius-mfa-confirm-code').send_keys(two_factor_code)
 
         driver.find_element_by_id('ius-mfa-otp-submit-btn').click()
