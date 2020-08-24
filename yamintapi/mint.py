@@ -124,12 +124,17 @@ class Mint():
                            transaction_date: date = None,
                            tags: Mapping[str, bool] = {}) -> bool:
         '''
-        transaction_id can be obtained from get_transactions()
+        transaction_id can be obtained from get_transactions().
+
+        It can be a single id, or a list of ids.  Example "12345:0" or "23456:1", where the :0 or :1 ending is txnType
+        (0 is cash/credit transaction, 1 is investment transactions). If only the id with txnType suffix is added, the
+        transaction will be presumed to be a credit/cash one.
 
         To add/remove tag, pass `tags={'tag_name': True/False}`. Tags not present in `tags` will remain unchanged.
 
         Only one of category_name and category_id is needed (category_id takes priority). Usually category_name
         suffices, unless there are multiple categories with the same name (but under different parent categories).
+
         '''
         if not category_id and category_name:
             category_id = self.category_name_to_id(category_name)
@@ -143,7 +148,7 @@ class Mint():
 
         data = {
             'task': 'txnedit', 'token': self._js_token,
-            'txnId': ','.join(['{}:0'.format(i) for i in trans_ids]),
+            'txnId': ','.join(['{}:0'.format(i) if ':' not in i else i for i in trans_ids]),
             'note': note,
             'merchant': description,
             'catId': category_id,
@@ -446,6 +451,7 @@ class Mint():
             if 'session has expired' in response.text.lower():
                 raise MintSessionExpiredException()
             else:
+                logger.error('_get_json_response failed response: {}'.format(self._last_request_result))
                 raise RuntimeError('Request for {} {} {} failed: {} {}'.format(url, params, data, response.status_code, response.headers))
 
         return json.loads(response.text)
