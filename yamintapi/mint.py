@@ -24,6 +24,7 @@ class Mint():
         self.session.headers.update({'User-Agent': _USER_AGENT})
 
     def initiate_account_refresh(self):
+        # Potential new API: https://financialprofileorchestration.api.intuit.com/v1/users/805612120/acquire
         self.session.post(os.path.join(_MINT_ROOT_URL, 'refreshFILogins.xevent'), data={'token': self._js_token})
 
     def refresh_accounts(self, max_wait_time=60, refresh_every=10) -> dict:
@@ -48,13 +49,35 @@ class Mint():
         }
         return self._get_service_response(params)
 
-    def get_transactions(self, include_investment=True, limit=None, do_basic_cleaning=True) -> Seq[dict]:
+    def get_transactions(
+            self,
+            include_investment=True,
+            limit=None,
+            offset=0,
+            sort_field='date',
+            sort_ascending=False,
+            do_basic_cleaning=True
+    ) -> Seq[dict]:
         '''
         Return detailed transactions. Suggest running with e.g. get_transactions(limit=100) since getting all transactions is
         a slow operation.
         '''
+        comparableType = {
+            ('date', True): 4,
+            ('date', False): 8,
+            ('amount', True): 7,
+            ('amount', False): 3,
+            ('merchant', True): 1,
+            ('merchant', False): 5,
+            ('category', True): 2,
+            ('category', True): 6,
+        }.get((sort_field, sort_ascending), None)
+
+        if comparableType is None:
+            raise ValueError('Sort field {} and ascending {} is not supported'.format(sort_field, sort_ascending))
+
         params = {'queryNew': None,
-                  'comparableType': 8,
+                  'comparableType': comparableType,
                   'task': 'transactions'}
         if include_investment:
             params['accountId'] = 0
@@ -62,7 +85,7 @@ class Mint():
             params['task'] = 'transactions,txnfilter'
             params['filterType'] = 'cash'
 
-        transactions = self._get_jsondata_response_generator(params)
+        transactions = self._get_jsondata_response_generator(params, initial_offset=offset)
         transactions = (islice(transactions, limit) if limit else transactions)
         if not do_basic_cleaning:
             return list(transactions)
@@ -308,8 +331,18 @@ class Mint():
     @property
     def is_logged_in(self) -> bool:
         return self._js_token is not None
+    def change_transaction_page_limit(self, page_size=100):
+        """
+        Change how default number of transactions returned per page (it seems only 25, 50, 100 work)
+        """
+        params = {
+            "task": "transactionResults",
+            "data": page_size,
+            "token": self._js_token,
+        }
+        return self._get_json_response('updatePreference.xevent', data=params, expect_json=False)
 
-    def _get_json_response(self, url, params: dict = None, data: dict = None, method='post') -> dict:
+    def _get_json_response(self, url, params: dict = None, data: dict = None, method='post', expect_json=True) -> dict:
         response = self.session.request(method=method,
                                         url=os.path.join(_MINT_ROOT_URL, url),
                                         params=params,
@@ -318,8 +351,9 @@ class Mint():
 
         self._last_request_result = response.text
 
-        if (response.status_code != requests.codes.ok or
-           not re.match('text/json|application/json', response.headers.get('content-type', ''))):
+        is_json_resp = re.match('text/json|application/json', response.headers.get('content-type', ''))
+
+        if (response.status_code != requests.codes.ok or (expect_json and not is_json_resp)):
             if 'session has expired' in response.text.lower():
                 raise MintSessionExpiredException()
             else:
