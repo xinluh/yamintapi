@@ -4,6 +4,8 @@ import getpass
 import json
 import re
 import os
+from pathlib import Path
+import pickle
 import random
 from itertools import islice
 from functools import lru_cache
@@ -335,9 +337,47 @@ class Mint():
         self.get_tags.cache_clear()
         return self
 
-    @property
-    def is_logged_in(self) -> bool:
-        return self._js_token is not None
+    def cached_login(self, email, password, get_two_factor_code_func=None, debug=False, custom_cahce_location=None) -> 'Mint':
+        '''
+        See information for login().
+
+        This caches successful login to filesystem, so multiple process can re-use the same login.
+        '''
+        CACHE_VERSION = 0
+
+        cache_dir = Path(custom_cahce_location) if custom_cahce_location is not None else (Path.home() / '.cache/yamintapi')
+        cache_dir.mkdir(exist_ok=True, parents=True)
+        cache_file = cache_dir / 'cached_login.pkl'
+
+        if cache_file.exists():
+            with open(cache_file, 'rb') as f:
+                cached = pickle.load(f)
+            if cached['version'] == CACHE_VERSION and cached['email'] == email:
+                self._js_token = cached['js_token']
+                self.session.cookies = cached['cookies']
+
+                if self.is_logged_in(check=True):
+                    logger.info('Using cached login')
+                    return self
+
+        self.login(email, password, get_two_factor_code_func=get_two_factor_code_func, debug=debug)
+
+        with open(cache_file, 'wb') as f:
+            logger.info('Caching login to file {}'.format(cache_file))
+            pickle.dump({
+                'version': CACHE_VERSION,
+                'js_token': self._js_token,
+                'cookies': self.session.cookies,
+                'email': email,
+            }, f)
+
+    def is_logged_in(self, check=False) -> bool:
+        if not check:
+            return self._js_token is not None
+
+        resp = self._get_json_response('userStatus.xevent', params={'rnd': random.randint(0, 10**14)}, method='get')
+        return 'isRefreshing' in resp
+
     def change_transaction_page_limit(self, page_size=100):
         """
         Change how default number of transactions returned per page (it seems only 25, 50, 100 work)
