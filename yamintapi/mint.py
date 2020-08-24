@@ -119,7 +119,7 @@ class Mint():
                            category_name: str = None, category_id: int = None,
                            note: str = None,
                            transaction_date: date = None,
-                           tags: Mapping[str, bool] = {}) -> dict:
+                           tags: Mapping[str, bool] = {}) -> bool:
         '''
         transaction_id can be obtained from get_transactions()
 
@@ -131,19 +131,26 @@ class Mint():
         if not category_id and category_name:
             category_id = self.category_name_to_id(category_name)
 
+        category_name = next((c['name'] for c in m.get_categories() if c['id'] == category_id), None)
+        if not category_name:
+            raise ValueError('{} is not a valid category id'.format(category_id))
+
         data = {
             'task': 'txnedit', 'token': self._js_token,
             'txnId': '{}:0'.format(transaction_id),
             'note': note,
             'merchant': description,
             'catId': category_id,
+            'category': category_name,
             'date': transaction_date.strftime('%m/%d/%Y') if transaction_date else None,
         }
 
         for tag, checked in tags.items():
             data['tag{}'.format(self.tag_name_to_id(tag))] = 2 if checked else 0
 
-        return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
+        resp = self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
+
+        return resp.get('task') == 'txnedit'
 
     def add_cash_transaction(self,
                              description: str,
