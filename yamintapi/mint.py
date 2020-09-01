@@ -418,6 +418,8 @@ class Mint():
                 'email': email,
             }, f)
 
+        return self
+
     def is_logged_in(self, check=False) -> bool:
         if not check:
             return self._js_token is not None
