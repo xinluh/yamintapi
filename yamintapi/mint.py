@@ -375,6 +375,8 @@ class Mint():
 
         if not debug:
             driver.close()
+            time.sleep(2)
+            driver.quit()
 
         self.get_accounts.cache_clear()
         self.get_categories.cache_clear()
