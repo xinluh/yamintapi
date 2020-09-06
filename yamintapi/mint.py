@@ -51,6 +51,18 @@ class Mint():
         }
         return self._get_service_response(params)
 
+
+    def _clean_transaction(self, raw_transaction):
+        def fix_date(date_str):
+            # Mint returns dates like 'Feb 23' for transactions in the current year; reformat to standard date instead
+            return (date_str if '/' in date_str
+                    else datetime.strptime(date_str + str(date.today().year), '%b %d%Y').strftime('%m/%d/%y'))
+
+        for date_key in ('date', 'odate'):
+            raw_transaction[date_key] = fix_date(raw_transaction[date_key])
+        raw_transaction['amount'] = float(raw_transaction['amount'].strip('$').replace(',', '')) * (-1 if raw_transaction['isDebit'] else 1)
+        return raw_transaction
+
     def get_transactions(
             self,
             include_investment=True,
@@ -89,21 +101,12 @@ class Mint():
 
         transactions = self._get_jsondata_response_generator(params, initial_offset=offset)
         transactions = (islice(transactions, limit) if limit else transactions)
+
         if not do_basic_cleaning:
             return list(transactions)
+        else:
+            return list(map(self._clean_transaction, transactions))
 
-        def fix_date(date_str):
-            # Mint returns dates like 'Feb 23' for transactions in the current year; reformat to standard date instead
-            return (date_str if '/' in date_str
-                    else datetime.strptime(date_str + str(date.today().year), '%b %d%Y').strftime('%m/%d/%y'))
-
-        def clean_up(trans):
-            for date_key in ('date', 'odate'):
-                trans[date_key] = fix_date(trans[date_key])
-            trans['amount'] = float(trans['amount'].strip('$').replace(',', '')) * (-1 if trans['isDebit'] else 1)
-            return trans
-
-        return list(map(clean_up, transactions))
 
     def get_transactions_csv(self, include_investment=True) -> str:
         '''
@@ -185,7 +188,7 @@ class Mint():
 
         return resp.get('task') == 'delete'
 
-    def get_transaction_by_id(self, transaction_id):
+    def get_transaction_by_id(self, transaction_id, do_basic_cleaning=True):
         """
         transaction_id can either be a number, e.g. 103867187, in which case it will be assume to be
         of transaction type 0 (cash / bank); or a fully qualified string, e.g. "103867187:1", which is
@@ -205,9 +208,15 @@ class Mint():
             raise RuntimeError('Unexpected output from listSplitTransactions: {}'.format(res))
 
         if str(res['parent'][0]['id']) == str(transaction_id):
-            return res['parent'][0]
+            trans = res['parent'][0]
         else:
-            return next((t for t in res['children'] if str(t['id']) == str(transaction_id)), None)
+            trans = next((t for t in res['children'] if str(t['id']) == str(transaction_id)), None)
+
+        if trans is not None and do_basic_cleaning:
+            trans = self._clean_transaction(trans)
+
+        return trans
+
 
     def add_cash_transaction(self,
                              description: str,
