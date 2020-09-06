@@ -185,18 +185,29 @@ class Mint():
 
         return resp.get('task') == 'delete'
 
-    def get_transaction_by_id(self, transaction_id: int):
+    def get_transaction_by_id(self, transaction_id):
+        """
+        transaction_id can either be a number, e.g. 103867187, in which case it will be assume to be
+        of transaction type 0 (cash / bank); or a fully qualified string, e.g. "103867187:1", which is
+        required for brokerage transactions.
+        """
+        full_trans_id = str(transaction_id)
+        if ':' not in full_trans_id:
+            full_trans_id = '{}:0'.format(full_trans_id)
+        else:
+            transaction_id = int(full_trans_id.split(":")[0])
+
         res = self._get_json_response('listSplitTransactions.xevent', {
-            'txnId': '{}:0'.format(transaction_id)
+            'txnId': full_trans_id
         }, method='get')
 
         if 'parent' not in res or 'children' not in res:
             raise RuntimeError('Unexpected output from listSplitTransactions: {}'.format(res))
 
-        if res['parent'][0]['id'] == transaction_id:
+        if str(res['parent'][0]['id']) == str(transaction_id):
             return res['parent'][0]
         else:
-            return next((t for t in res['children'] if t['id'] == transaction_id), None)
+            return next((t for t in res['children'] if str(t['id']) == str(transaction_id)), None)
 
     def add_cash_transaction(self,
                              description: str,
