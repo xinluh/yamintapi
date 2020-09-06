@@ -1,5 +1,6 @@
 import requests
 import time
+import html
 import getpass
 import json
 import re
@@ -202,7 +203,7 @@ class Mint():
 
         res = self._get_json_response('listSplitTransactions.xevent', {
             'txnId': full_trans_id
-        }, method='get')
+        }, method='get', unescape_html=True)
 
         if 'parent' not in res or 'children' not in res:
             raise RuntimeError('Unexpected output from listSplitTransactions: {}'.format(res))
@@ -460,7 +461,7 @@ class Mint():
         }
         return self._get_json_response('updatePreference.xevent', data=params, expect_json=False)
 
-    def _get_json_response(self, url, params: dict = None, data: dict = None, method='post', expect_json=True) -> dict:
+    def _get_json_response(self, url, params: dict = None, data: dict = None, method='post', expect_json=True, unescape_html=False) -> dict:
         response = self.session.request(method=method,
                                         url=os.path.join(_MINT_ROOT_URL, url),
                                         params=params,
@@ -478,7 +479,11 @@ class Mint():
                 logger.error('_get_json_response failed response: {}'.format(self._last_request_result))
                 raise RuntimeError('Request for {} {} {} failed: {} {}'.format(url, params, data, response.status_code, response.headers))
 
-        return json.loads(response.text)
+        resp_text = response.text
+        if unescape_html:
+            resp_text = html.unescape(resp_text)
+
+        return json.loads(resp_text)
 
     def _get_service_response(self, data: dict) -> dict:
         data = data.copy()
