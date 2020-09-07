@@ -71,6 +71,9 @@ class Mint():
             offset=0,
             sort_field='date',
             sort_ascending=False,
+            query=None,
+            start_date=None,
+            end_date=None,
             do_basic_cleaning=True
     ) -> Seq[dict]:
         '''
@@ -91,14 +94,23 @@ class Mint():
         if comparableType is None:
             raise ValueError('Sort field {} and ascending {} is not supported'.format(sort_field, sort_ascending))
 
-        params = {'queryNew': None,
-                  'comparableType': comparableType,
-                  'task': 'transactions'}
+        params = {
+            'queryNew': '',
+            'comparableType': comparableType,
+            'task': 'transactions',
+            'query': query,
+            'startDate': start_date,
+            'endDate': end_date,
+        }
+
         if include_investment:
             params['accountId'] = 0
         else:
-            params['task'] = 'transactions,txnfilter'
             params['filterType'] = 'cash'
+            params['task'] = 'transactions,txnfilter',
+
+
+        params = {k: v for k, v in params.items() if v is not None}
 
         transactions = self._get_jsondata_response_generator(params, initial_offset=offset)
         transactions = (islice(transactions, limit) if limit else transactions)
@@ -140,13 +152,8 @@ class Mint():
         suffices, unless there are multiple categories with the same name (but under different parent categories).
 
         '''
-        if not category_id and category_name:
-            category_id = self.category_name_to_id(category_name)
 
-        if category_id is not None:
-            category_name = next((c['name'] for c in self.get_categories() if c['id'] == category_id), None)
-            if not category_name:
-                raise ValueError('{} is not a valid category id'.format(category_id))
+        category_id, category_name = self._validate_category(category_id, category_name)
 
         trans_ids = transaction_id if isinstance(transaction_id, list) else [transaction_id]
 
@@ -174,6 +181,73 @@ class Mint():
             logger.error('update_transaction failed,resp: {}'.format(resp))
 
         return success
+
+
+    def _validate_category(self, category_id, category_name) -> [int, str]:
+        if category_id is None and category_name is None:
+            return category_id, category_name
+
+        if not category_id and category_name:
+            category_id = self.category_name_to_id(category_name)
+
+        if category_id is not None:
+            category_name = next((c['name'] for c in self.get_categories() if c['id'] == category_id), None)
+            if not category_name:
+                raise ValueError('{} is not a valid category id'.format(category_id))
+
+        return category_id, category_name
+
+
+    def split_transaction(self, transaction_id, split_transactions: List[dict]) -> dict:
+        """
+        Split transactions. Return a list of transaction ids, where the first one is the origianl transactions,
+        and subsequent ones are the child transactions.
+
+        To unsplit the transaction, simply provide an empty list to split_transactions.
+        If the sum of split_transactions doesn't match the origianl amount, Mint will automatically create
+        one more split transaction with the remainder.
+
+        >>> mint.split_transaction('3985739713:0', [
+        >>>      {'amount': 10, 'merchant': 'description 1', 'category_name': 'Transfer'},
+        >>>      {'amount': 26.34, 'merchant': 'description 2', 'category_name': 'Transfer'}
+        >>> ])
+
+        Return the split transactions
+        """
+        full_trans_id = transaction_id if ':' in transaction_id else '{}:0'.format(transaction_id)
+
+        params = {
+            'task': 'split',
+            'data': '',
+            'txnId': full_trans_id,
+            'token': self._js_token,
+        }
+
+        for idx, tr in enumerate(split_transactions):
+            category_id, category_name = self._validate_category(tr.get('category_id'), tr.get('category_name'))
+            if category_id is None:
+                raise ValueError('Category id or name is missng or invalid')
+
+            params['amount{}'.format(idx)] = tr['amount']
+            params['percentAmount{}'.format(idx)] = tr['amount']
+            params['category{}'.format(idx)] = category_name
+            params['categoryId{}'.format(idx)] = category_id
+            params['merchant{}'.format(idx)] = tr['merchant']
+            params['txnId{}'.format(idx)] = 0
+
+        resp = self._get_json_response('updateTransaction.xevent', data=params)
+
+        if resp.get('task') != 'split':
+            raise RuntimeError('Split transaction failed: {}'.format(resp))
+
+        split_resp = self._get_json_response('listSplitTransactions.xevent', {
+            'txnId': full_trans_id
+        }, method='get', unescape_html=True)
+
+        result_trans = split_resp['children'] if len(split_resp['children']) > 0 else split_resp['parent']
+
+        return [self._clean_transaction(t) for t in result_trans]
+
 
     def delete_transaction(self, transaction_id: int) -> bool:
         trans = self.get_transaction_by_id(transaction_id)
@@ -504,7 +578,8 @@ class Mint():
         while True:
             params['offset'] = offset
             params['rnd'] = random.randint(0, 10**14)
-            results = self._get_json_response('app/getJsonData.xevent', params=params, method='get')['set'][0].get('data', [])
+            resp = self._get_json_response('app/getJsonData.xevent', params=params, method='get')
+            results = [r for r in resp['set'] if r['id'] == 'transactions'][0].get('data', [])
             offset += len(results)
             for result in results:
                 yield result
