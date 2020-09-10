@@ -14,10 +14,23 @@ from datetime import datetime, date
 from typing import Sequence as Seq, Mapping, Union, List
 import logging
 
+
 logger  = logging.getLogger(__name__)
+
 
 _USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9) AppleWebKit/537.71 (KHTML, like Gecko) Version/7.0 Safari/537.71'
 _MINT_ROOT_URL = 'https://mint.intuit.com'
+_FINANCIAL_PROVIDER_API_HEADERS = {
+    'Authorization': 'Intuit_APIKey intuit_apikey=prdakyrespQBtEtvaclVBEgFGm7NQflbRaCHRhAy, intuit_apikey_version=1.0',
+    "content-type": "application/json",
+    "intuit_appid": "1040",
+    "intuit_country": "US",
+    "intuit_iddomain": "GLOBAL",
+    "intuit_locale": "en_US",
+    "intuit_offeringid": "mint.intuit.com",
+    "intuit_originatingip": "127.0.0.1",
+    "intuit_tid": "mw-090-88947e05-e57a-4f84-b5f9-debdfbd43653",
+}
 
 
 class Mint():
@@ -27,8 +40,17 @@ class Mint():
         self.session.headers.update({'User-Agent': _USER_AGENT})
 
     def initiate_account_refresh(self):
-        # Potential new API: https://financialprofileorchestration.api.intuit.com/v1/users/805612120/acquire
-        self.session.post(os.path.join(_MINT_ROOT_URL, 'refreshFILogins.xevent'), data={'token': self._js_token})
+        providers = self.get_financial_providers()
+        links = providers.get('metaData', {}).get('link', {}) or []
+
+        refresh_ops = next((l for l in links if l.get('operation') == 'refreshAllProviders'), None)
+
+        if not refresh_ops:
+            raise RuntimeError('initiate_account_refresh failed: {}'.format(providers.get('metaData')))
+
+        res = self.session.post(refresh_ops['href'], headers=_FINANCIAL_PROVIDER_API_HEADERS)
+
+        return res.json()
 
     def refresh_accounts(self, max_wait_time=60, refresh_every=10) -> dict:
         """Initiate an account refresh and wait for the refresh to finish.
@@ -52,6 +74,36 @@ class Mint():
         }
         return self._get_service_response(params)
 
+    @lru_cache()
+    def get_financial_providers(self) -> Seq[dict]:
+        res = self.session.get(os.path.join(_MINT_ROOT_URL, 'mas/v1/providers'), headers=_FINANCIAL_PROVIDER_API_HEADERS)
+        return res.json()
+
+    def _get_provider(self, fi_id) -> dict:
+        # Provider ids looks like `PFM:{user_id}_{fi_id}`
+        providers = self.get_financial_providers().get('providers', [])
+
+        provider = next((p for p in providers if p.get('id', '').endswith('_{}'.format(fi_id))), None)
+
+        if not provider:
+            raise RuntimeError('asset not found out of {} providers'.format(len(providers)))
+
+        return provider
+
+    def update_asset_value(self, fi_id: int, value: float) -> dict:
+        provider = self._get_provider(fi_id)
+        acct = provider['providerAccounts'][0]
+        url = acct['metaData']['link'][0]['href'].strip('/')
+        params = {
+            "name": acct['name'],
+            "type": "OtherPropertyAccount",
+            "associatedLoanAccounts": acct['associatedLoanAccounts'],
+            "hasAssociatedLoanAccounts": len(acct['associatedLoanAccounts']) > 0,
+            "value": value
+        }
+
+        res = self.session.patch(os.path.join(_MINT_ROOT_URL, 'mas', url), headers=_FINANCIAL_PROVIDER_API_HEADERS, data=json.dumps(params))
+        return res.status_code < 400
 
     def _clean_transaction(self, raw_transaction):
         def fix_date(date_str):
@@ -257,7 +309,7 @@ class Mint():
     def delete_transaction(self, transaction_id: str) -> bool:
         trans = self.get_transaction_by_id(transaction_id)
 
-        if not trans['isPending'] and not trans['fi'] == 'Cash Account':
+        if not trans['isPending'] and not trans['account'] == 'Cash':
             raise RuntimeError('transacation_id {} is not a pending or cash transaction. Probably not a good idea to delete'.format(transaction_id))
 
         full_id = '{}:0'.format(transaction_id) if ':' not in transaction_id else transaction_id
