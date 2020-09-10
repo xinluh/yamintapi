@@ -249,15 +249,16 @@ class Mint():
         return [self._clean_transaction(t) for t in result_trans]
 
 
-    def delete_transaction(self, transaction_id: int) -> bool:
+    def delete_transaction(self, transaction_id: str) -> bool:
         trans = self.get_transaction_by_id(transaction_id)
 
-        if not trans['isPending'] and not trans['fi'] == 'Cash':
+        if not trans['isPending'] and not trans['fi'] == 'Cash Account':
             raise RuntimeError('transacation_id {} is not a pending or cash transaction. Probably not a good idea to delete'.format(transaction_id))
 
+        full_id = '{}:0'.format(transaction_id) if ':' not in transaction_id else transaction_id
         resp = self._get_json_response('updateTransaction.xevent', data={
             'task': 'delete',
-            'txnId': '{}:0'.format(transaction_id),
+            'txnId': full_id,
             'token': self._js_token,
         })
 
