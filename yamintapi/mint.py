@@ -20,18 +20,6 @@ logger  = logging.getLogger(__name__)
 
 _USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9) AppleWebKit/537.71 (KHTML, like Gecko) Version/7.0 Safari/537.71'
 _MINT_ROOT_URL = 'https://mint.intuit.com'
-_FINANCIAL_PROVIDER_API_HEADERS = {
-    'Authorization': 'Intuit_APIKey intuit_apikey=prdakyrespQBtEtvaclVBEgFGm7NQflbRaCHRhAy, intuit_apikey_version=1.0',
-    "content-type": "application/json",
-    "intuit_appid": "1040",
-    "intuit_country": "US",
-    "intuit_iddomain": "GLOBAL",
-    "intuit_locale": "en_US",
-    "intuit_offeringid": "mint.intuit.com",
-    "intuit_originatingip": "127.0.0.1",
-    "intuit_tid": "mw-090-88947e05-e57a-4f84-b5f9-debdfbd43653",
-}
-
 
 class Mint():
     def __init__(self):
@@ -39,7 +27,7 @@ class Mint():
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': _USER_AGENT})
 
-    def initiate_account_refresh(self):
+    def initiate_account_refresh_all(self):
         providers = self.get_financial_providers()
         links = providers.get('metaData', {}).get('link', {}) or []
 
@@ -48,22 +36,49 @@ class Mint():
         if not refresh_ops:
             raise RuntimeError('initiate_account_refresh failed: {}'.format(providers.get('metaData')))
 
-        res = self.session.post(refresh_ops['href'], headers=_FINANCIAL_PROVIDER_API_HEADERS)
+        res = self._get_financial_provider_response(refresh_ops['href'], method='post')
 
         return res.json()
+
+    def initiate_account_refresh(self, fi_id):
+        """
+        fi_id is the `fiLoginId` key in the get_accounts() output
+        """
+        provider = self._get_provider(fi_id)
+        refresh_url = next((l['href'] for l in provider['metaData']['link'] if l['operation'] == 'refreshProvider'), None)
+        get_url = next((l['href'] for l in provider['metaData']['link'] if l['operation'] == 'self'), None)
+
+        if not refresh_url:
+            raise RuntimeError('Unexpected provider format: {}'.format(provider))
+
+        params = {
+            "requestParams":{"selectors":{"accountSelector":{},"billSelector":{},"transactionSelector":{}}},
+            "providers":[{
+                "providerId": provider['staticProviderRef']['id'],
+                "credentialSets":[
+                    {"credentialSetId":provider['cpProviderId']
+                    }
+                ]
+            }]
+        }
+
+        self._get_financial_provider_response(refresh_url, method='post', data=params)
+
+        self._get_financial_provider_response('https://mint.intuit.com/pfm/v1/fdpa/provision/ticket', method='put')
+
+        return self._get_financial_provider_response(get_url).json()
 
     def refresh_accounts(self, max_wait_time=60, refresh_every=10) -> dict:
         """Initiate an account refresh and wait for the refresh to finish.
         Returns None if timed out.
         """
-        self.initiate_account_refresh()
+        self.initiate_account_refresh_all()
         for _ in range(max_wait_time//refresh_every):
             data = self._get_json_response('userStatus.xevent', params={'rnd': random.randint(0, 10**14)}, method='get')
             if data['isRefreshing'] is False:
                 return data
             time.sleep(refresh_every)
 
-    @lru_cache()
     def get_accounts(self) -> Seq[dict]:
         params = {
             'args': {
@@ -74,16 +89,17 @@ class Mint():
         }
         return self._get_service_response(params)
 
-    @lru_cache()
     def get_financial_providers(self) -> Seq[dict]:
-        res = self.session.get(os.path.join(_MINT_ROOT_URL, 'mas/v1/providers'), headers=_FINANCIAL_PROVIDER_API_HEADERS)
-        return res.json()
+        return self._get_financial_provider_response('/v1/providers').json()
 
     def _get_provider(self, fi_id) -> dict:
         # Provider ids looks like `PFM:{user_id}_{fi_id}`
         providers = self.get_financial_providers().get('providers', [])
 
-        provider = next((p for p in providers if p.get('id', '').endswith('_{}'.format(fi_id))), None)
+        def get_id(provider, default=None):
+            return next((d.get('id') for d in provider.get('domainIds', []) if d.get('domain') == 'PFM'), default)
+
+        provider = next((p for p in providers if get_id(p, '').endswith('_{}'.format(fi_id))), None)
 
         if not provider:
             raise RuntimeError('asset not found out of {} providers'.format(len(providers)))
@@ -91,9 +107,15 @@ class Mint():
         return provider
 
     def update_asset_value(self, fi_id: int, value: float) -> dict:
+        """
+        Update value for manually entered assets.
+
+        fi_id is the `fiLoginId` key in the get_accounts() output
+        """
+
         provider = self._get_provider(fi_id)
         acct = provider['providerAccounts'][0]
-        url = acct['metaData']['link'][0]['href'].strip('/')
+        url = acct['metaData']['link'][0]['href']
         params = {
             "name": acct['name'],
             "type": "OtherPropertyAccount",
@@ -102,7 +124,7 @@ class Mint():
             "value": value
         }
 
-        res = self.session.patch(os.path.join(_MINT_ROOT_URL, 'mas', url), headers=_FINANCIAL_PROVIDER_API_HEADERS, data=json.dumps(params))
+        res = self._get_financial_provider_response(url, method='patch', data=params)
         return res.status_code < 400
 
     def _clean_transaction(self, raw_transaction):
@@ -126,6 +148,7 @@ class Mint():
             query=None,
             start_date=None,
             end_date=None,
+            account_id=None,
             do_basic_cleaning=True
     ) -> Seq[dict]:
         '''
@@ -155,7 +178,10 @@ class Mint():
             'endDate': end_date,
         }
 
-        if include_investment:
+        if account_id is not None:
+            params['accountId'] = account_id
+            params['acctChanged'] = 'T'
+        elif include_investment:
             params['accountId'] = 0
         else:
             params['filterType'] = 'cash'
@@ -531,7 +557,6 @@ class Mint():
             time.sleep(2)
             driver.quit()
 
-        self.get_accounts.cache_clear()
         self.get_categories.cache_clear()
         self.get_tags.cache_clear()
         return self
@@ -629,6 +654,24 @@ class Mint():
             raise RuntimeError('bundleServiceController request for {} failed, response: {} {}'.format(data, result, result.text))
 
         return result['response'][data['id']]['response']
+
+    def _get_financial_provider_response(self, url, method='get', data=None):
+        full_url = os.path.join(_MINT_ROOT_URL, 'mas', url.strip('/')) if url.startswith('/') else url
+
+        headers = {
+            'Authorization': 'Intuit_APIKey intuit_apikey=prdakyrespQBtEtvaclVBEgFGm7NQflbRaCHRhAy, intuit_apikey_version=1.0',
+            "content-type": "application/json",
+            "intuit_appid": "1040",
+            "intuit_country": "US",
+            "intuit_iddomain": "GLOBAL",
+            "intuit_locale": "en_US",
+            "intuit_offeringid": "mint.intuit.com",
+            "intuit_originatingip": "127.0.0.1",
+            "intuit_tid": "mw-090-88947e05-e57a-4f84-b5f9-debdfbd43653",
+        }
+
+        logger.debug('_get_financial_provider_response[{}]'.format(full_url))
+        return self.session.request(method=method, url=full_url, headers=headers, data=json.dumps(data))
 
     def _get_jsondata_response_generator(self, params, initial_offset=0):
         params = params.copy()
