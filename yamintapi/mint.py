@@ -138,7 +138,9 @@ class Mint():
                            is_duplicate: bool = None,
                            note: str = None,
                            transaction_date: date = None,
-                           tags: Mapping[str, bool] = {}) -> bool:
+                           tags: Mapping[str, bool] = {},
+                           amount: float = None,
+    ) -> bool:
         '''
         transaction_id can be obtained from get_transactions().
 
@@ -151,6 +153,8 @@ class Mint():
         Only one of category_name and category_id is needed (category_id takes priority). Usually category_name
         suffices, unless there are multiple categories with the same name (but under different parent categories).
 
+        The amount arg is only valid for cash transactions. The request will fail if trying to modify amount for
+        a non-cash transaction.
         '''
 
         category_id, category_name = self._validate_category(category_id, category_name)
@@ -166,6 +170,7 @@ class Mint():
             'category': category_name,
             'date': transaction_date.strftime('%m/%d/%Y') if transaction_date else None,
             'duplicate': 'on' if is_duplicate == True else None,
+            'amount': amount
         }
 
         for tag, checked in tags.items():
