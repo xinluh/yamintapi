@@ -68,16 +68,11 @@ class Mint():
 
         return self._get_financial_provider_response(get_url).json()
 
-    def refresh_accounts(self, max_wait_time=60, refresh_every=10) -> dict:
+    def refresh_accounts(self) -> dict:
         """Initiate an account refresh and wait for the refresh to finish.
         Returns None if timed out.
         """
         self.initiate_account_refresh_all()
-        for _ in range(max_wait_time//refresh_every):
-            data = self._get_json_response('userStatus.xevent', params={'rnd': random.randint(0, 10**14)}, method='get')
-            if data['isRefreshing'] is False:
-                return data
-            time.sleep(refresh_every)
 
     def get_accounts(self) -> Seq[dict]:
         params = {
