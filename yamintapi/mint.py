@@ -473,10 +473,11 @@ class Mint():
 
         '''
         from selenium import webdriver
-        from selenium.common.exceptions import ElementNotVisibleException, NoSuchElementException
+        from selenium.common.exceptions import ElementNotVisibleException, NoSuchElementException, ElementNotInteractableException
 
         options = webdriver.ChromeOptions()
-        options.add_argument('headless')
+        if not debug:
+            options.add_argument('headless')
 
         driver = webdriver.Chrome(chrome_options=options)
         if debug:
@@ -502,9 +503,22 @@ class Mint():
             raise Exception('Fail to find id={} to click on'.format(elem_id))
 
         logger.info('Waiting for login page to load...')
-        wait_and_click_by_id('ius-userid').send_keys(email)
-        wait_and_click_by_id('ius-password').send_keys(password)
-        wait_and_click_by_id('ius-sign-in-submit-btn')
+
+        try:
+            # try old login page first (user name and password on same page)
+            wait_and_click_by_id('ius-userid').send_keys(email)
+            wait_and_click_by_id('ius-password').send_keys(password)
+            wait_and_click_by_id('ius-sign-in-submit-btn')
+        except ElementNotInteractableException:
+            # new login page
+            try:
+                wait_and_click_by_id('ius-identifier').send_keys(email)
+                wait_and_click_by_id('ius-sign-in-submit-btn')
+                wait_and_click_by_id('ius-sign-in-mfa-password-collection-current-password').send_keys(password)
+                wait_and_click_by_id('ius-sign-in-mfa-password-collection-continue-btn')
+            except Exception:
+                driver.get_screenshot_as_file('/tmp/mint_login_input_failed.png')
+                raise
 
         def get_js_token(driver):
             if driver.current_url.startswith(overview_url):
@@ -618,7 +632,7 @@ class Mint():
                                         url=os.path.join(_MINT_ROOT_URL, url),
                                         params=params,
                                         data=data,
-                                        headers={'accept': 'application/json'})
+                                        headers={'accept': 'application/json', 'token': self._js_token})
 
         self._last_request_result = response.text
 
