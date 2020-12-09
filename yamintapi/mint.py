@@ -509,7 +509,7 @@ class Mint():
             wait_and_click_by_id('ius-userid').send_keys(email)
             wait_and_click_by_id('ius-password').send_keys(password)
             wait_and_click_by_id('ius-sign-in-submit-btn')
-        except ElementNotInteractableException:
+        except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException):
             # new login page
             try:
                 wait_and_click_by_id('ius-identifier').send_keys(email)
@@ -517,7 +517,7 @@ class Mint():
                 wait_and_click_by_id('ius-sign-in-mfa-password-collection-current-password').send_keys(password)
                 wait_and_click_by_id('ius-sign-in-mfa-password-collection-continue-btn')
             except Exception:
-                driver.get_screenshot_as_file('/tmp/mint_login_input_failed.png')
+                driver.get_screenshot_as_file('/tmp/mint/login_input_failed.png')
                 raise
 
         def get_js_token(driver):
@@ -536,12 +536,25 @@ class Mint():
             if self._js_token:
                 break
 
+            # try authentication app option (soft token) first
+            try:
+                driver.find_element_by_id('ius-mfa-soft-token')
+                logger.info('Waiting for two factor code...')
+                two_factor_code = get_two_factor_code_func()
+                logger.info('Sending two factor code: {}'.format(two_factor_code))
+                wait_and_click_by_id('ius-mfa-soft-token').send_keys(two_factor_code)
+                wait_and_click_by_id('ius-mfa-soft-token-submit-btn')
+            except (NoSuchElementException, ElementNotVisibleException):
+                pass
+
+            # then try regular 2 factor
             try:
                 driver.find_element_by_id('ius-mfa-options-submit-btn')
                 self._two_factor_login(get_two_factor_code_func, driver)
             except (NoSuchElementException, ElementNotVisibleException):
                 pass
 
+            # skip any user verification screen
             try:
                 element = driver.find_element_by_id('ius-verified-user-update-btn-skip')
                 if element.is_displayed and element.is_enabled:
@@ -554,8 +567,8 @@ class Mint():
             logger.debug('Current page title: ' + driver.title)
 
         if not self._js_token:
-            driver.get_screenshot_as_file('/tmp/mint_login_failed.png')
-            raise RuntimeError('Failed to get js token from overview page; screenshot output to /tmp/mint_login_failed.png')
+            driver.get_screenshot_as_file('/tmp/mint/login_failed.png')
+            raise RuntimeError('Failed to get js token from overview page; screenshot output to /tmp/mint/login_failed.png')
 
         for cookie_json in driver.get_cookies():
             self.session.cookies.set(**{k: v for k, v in cookie_json.items()
