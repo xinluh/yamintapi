@@ -473,7 +473,7 @@ class Mint():
 
         '''
         from selenium import webdriver
-        from selenium.common.exceptions import ElementNotVisibleException, NoSuchElementException, ElementNotInteractableException
+        from selenium.common.exceptions import ElementNotVisibleException, NoSuchElementException, ElementNotInteractableException, StaleElementReferenceException
 
         options = webdriver.ChromeOptions()
         if not debug:
@@ -544,14 +544,15 @@ class Mint():
                 logger.info('Sending two factor code: {}'.format(two_factor_code))
                 wait_and_click_by_id('ius-mfa-soft-token').send_keys(two_factor_code)
                 wait_and_click_by_id('ius-mfa-soft-token-submit-btn')
-            except (NoSuchElementException, ElementNotVisibleException):
+                time.sleep(2)
+            except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException):
                 pass
 
             # then try regular 2 factor
             try:
                 driver.find_element_by_id('ius-mfa-options-submit-btn')
                 self._two_factor_login(get_two_factor_code_func, driver)
-            except (NoSuchElementException, ElementNotVisibleException):
+            except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException):
                 pass
 
             # skip any user verification screen
