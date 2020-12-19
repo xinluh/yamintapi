@@ -284,7 +284,7 @@ class Mint():
 
         data = {
             'task': 'txnedit', 'token': self._js_token,
-            'txnId': ','.join(['{}:0'.format(i) if ':' not in i else i for i in trans_ids]),
+            'txnId': ','.join(['{}:0'.format(i) if ':' not in str(i) else i for i in trans_ids]),
             'note': note,
             'merchant': description,
             'catId': category_id,
