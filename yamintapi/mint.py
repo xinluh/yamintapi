@@ -632,6 +632,29 @@ class Mint():
         self.get_tags.cache_clear()
         return self
 
+    def get_account_value_history(
+            self, acct_ids: List[int],
+            start_date: Union[date, datetime],
+            end_date: Union[date, datetime]
+    ) -> Mapping[str, float]:
+        resp = self._get_json_response('trendData.xevent', params={
+        "token": self._js_token,
+        "searchQuery": json.dumps({
+            "reportType": "AT",
+            "chartType": "H",
+            "comparison": "",
+            "matchAny": True,
+            "terms": [],
+            "accounts": {"groupIds": [], "accountIds": acct_ids, "count": len(acct_ids)},
+            "dateRange": {
+                "period": {"label": "All time","value": "AT"},
+                "start": start_date.strftime("%m/%d/%Y"),
+                "end": end_date.strftime("%m/%d/%Y")},
+            "drilldown": None,"categoryTypeFilter": "all"})
+        })
+
+        return {l['endString']: l['value'] for l in resp['trendList']}
+
     def cached_login(self, email, password, get_two_factor_code_func=None, debug=False, custom_cahce_location=None) -> 'Mint':
         '''
         See information for login().
