@@ -24,8 +24,14 @@ _MINT_ROOT_URL = 'https://mint.intuit.com'
 class Mint():
     def __init__(self):
         self._js_token = None
+        self._init_session()
+
+    def _init_session(self, cookies=None):
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': _USER_AGENT})
+
+        if cookies:
+            self.session.cookies = cookies
 
     def initiate_account_refresh_all(self):
         providers = self.get_financial_providers()
@@ -84,7 +90,7 @@ class Mint():
         }
         return self._get_service_response(params)
 
-    def get_financial_providers(self) -> Seq[dict]:
+    def get_financial_providers(self) -> dict:
         return self._get_financial_provider_response('/v1/providers').json()
 
     def _get_provider(self, fi_id) -> dict:
@@ -100,6 +106,48 @@ class Mint():
             raise RuntimeError('asset not found out of {} providers'.format(len(providers)))
 
         return provider
+
+    def _get_financial_provider_account(self, acct_id) -> dict:
+        providers = self.get_financial_providers().get('providers', [])
+
+        def get_id(acct, default=None):
+            return next((d.get('id') for d in acct.get('domainIds', []) if d.get('domain') == 'PFM'), default)
+
+        acct = next(
+            acct
+            for provider in providers
+            for acct in provider.get('providerAccounts', [])
+            if get_id(acct, '').endswith('_' + str(acct_id))
+        )
+
+        if not acct:
+            raise RuntimeError('account {} not found out of {} providers'.format(acct_id, len(providers)))
+
+        return acct
+
+    def set_account_visibility(self, acct_id, visible: bool) -> bool:
+        acct_json = self._get_financial_provider_account(acct_id)
+        update_url = next((l['href'] for l in acct_json['metaData']['link'] if l['operation'] == 'updateAccount'), None)
+
+        if not update_url:
+            raise RuntimeError('Unexpected acct format: {}'.format(acct_json))
+
+        if acct_json['isVisible'] == visible:
+            return True
+
+        params = {
+            "type": acct_json["type"],
+            "cpId": acct_json["cpId"],
+            "planningTrendsVisible": visible,
+            "isVisible": visible,
+            "isBillVisible": visible,
+            "isPaymentMethodVisible": visible
+        }
+
+        res = self._get_financial_provider_response(update_url, method='PATCH', data=params)
+
+        logger.info('set_account_visibility response: {}'.format(res.text))
+        return res.ok
 
     def update_asset_value(self, fi_id: int, value: float) -> dict:
         """
@@ -674,11 +722,14 @@ class Mint():
                                          data={'input': json.dumps([data])})
 
         if data['id'] not in result.get('response', []):
-            raise RuntimeError('bundleServiceController request for {} failed, response: {} {}'.format(data, result, result.text))
+            raise RuntimeError('bundleServiceController request for {} failed, response: {}'.format(data, result))
 
         return result['response'][data['id']]['response']
 
     def _get_financial_provider_response(self, url, method='get', data=None):
+        # for some reason, this call sometimes messes up the cookies
+        prev_cookies = self.session.cookies
+
         full_url = os.path.join(_MINT_ROOT_URL, 'mas', url.strip('/')) if url.startswith('/') else url
 
         headers = {
@@ -694,7 +745,12 @@ class Mint():
         }
 
         logger.debug('_get_financial_provider_response[{}]'.format(full_url))
-        return self.session.request(method=method, url=full_url, headers=headers, data=json.dumps(data))
+
+        res = self.session.request(method=method, url=full_url, headers=headers, data=json.dumps(data))
+
+        self._init_session(prev_cookies)
+
+        return res
 
     def _get_jsondata_response_generator(self, params, initial_offset=0):
         params = params.copy()
