@@ -548,6 +548,8 @@ class Mint():
                     pass
                 time.sleep(check_freq)
                 logger.debug('Waiting for id={} to be clickable'.format(elem_id))
+
+            driver.get_screenshot_as_file('/tmp/mint/login_click_failed.png')
             raise Exception('Fail to find id={} to click on'.format(elem_id))
 
         logger.info('Waiting for login page to load...')
@@ -593,7 +595,7 @@ class Mint():
                 wait_and_click_by_id('ius-mfa-soft-token').send_keys(two_factor_code)
                 wait_and_click_by_id('ius-mfa-soft-token-submit-btn')
                 time.sleep(2)
-            except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException):
+            except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException, ElementNotInteractableException):
                 pass
 
             # then try regular 2 factor
