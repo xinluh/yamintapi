@@ -536,11 +536,15 @@ class Mint():
         overview_url = os.path.join(_MINT_ROOT_URL, 'overview.event')
         driver.get(overview_url)
 
-        def wait_and_click_by_id(elem_id, timeout=10, check_freq=1):
+        def wait_and_click_by_id(elem_id, timeout=10, check_freq=1, by_testid=False):
             ''' more debug message and finer control over selenium's wait functionality '''
             for _ in range(timeout // check_freq):
                 try:
-                    element = driver.find_element_by_id(elem_id)
+                    if not by_testid:
+                        element = driver.find_element_by_id(elem_id)
+                    else:
+                        element = driver.find_element_by_xpath(f'//*[@data-testid = "{elem_id}"]')
+
                     if element.is_displayed and element.is_enabled:
                         element.click()
                         return element
@@ -586,7 +590,19 @@ class Mint():
             if self._js_token:
                 break
 
-            # try authentication app option (soft token) first
+            # try new authentication app option (soft token) first
+            try:
+                driver.find_element_by_id('iux-mfa-soft-token-verification-code')
+                logger.info('Waiting for two factor code...')
+                two_factor_code = get_two_factor_code_func()
+                logger.info('Sending two factor code: {}'.format(two_factor_code))
+                wait_and_click_by_id('iux-mfa-soft-token-verification-code').send_keys(two_factor_code)
+                wait_and_click_by_id('VerifySoftTokenSubmitButton', by_testid=True)
+                time.sleep(2)
+            except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException, ElementNotInteractableException):
+                pass
+
+            # then try old version of the 2fa soft token page
             try:
                 driver.find_element_by_id('ius-mfa-soft-token')
                 logger.info('Waiting for two factor code...')
