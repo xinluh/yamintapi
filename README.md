@@ -8,6 +8,12 @@ A minimalistic wrapper to Mint.com API, designed to be a lean but functional mod
 - Only real dependency is `requests`
 - For automated login, `selenium` and Chrome / [ChromeDriver](https://chromedriver.chromium.org/) are required. Alternatively, login information can be updated using information from a browser session.
 
+## Installation
+```
+python -m pip install git+https://github.com/xinlu/yamintapi.git@master
+```
+Or add to `requirements.txt` or `pyproject.toml` etc. depending on your package manager.
+
 ## Usage
 
 ### Log in
