@@ -1,6 +1,6 @@
 # yamintapi: Yet Another Mint.com API
 
-A minimalistic wrapper to Mint.com API, designed to be a lean but functional module that other Python applications can use.
+A minimalistic wrapper to Mint.com API, designed to be a lean but functional module that other Python applications can use. It has plenty of editing functionality such as add / change transactions, add tag, add/change custom category, etc.
 
 ## Requirements
 
@@ -81,62 +81,18 @@ mint.rename_category(new_category_id, 'specialized boba shop')
 mint.rename_category(new_category_id)
 ```
 
-## Advanced 2-factor setup
-For using this library in a way that doesn't require any user interaction (for example, a cronjob in a server), 2-factor verification may be a blocker, especially if Mint server determined that a certain IP address is high risk and frequently requires 2-factor code.
-
-General strategy is to forward the 2 factor code from your email to your trusted server, which pauses and waits for code during the Mint login process via the `get_two_factor_code_func` option in `Mint().login(...)` function.
-
-An example function is included: the follow code pauses the login process to start a temporary http server at port 2222 that waits up to 120 seconds for a GET request that looks like `/mintcode?<2-factor-code>`
+## 2-factor setup
+If the script using Mint is running headlessly, then it is essential to set up 2 factor. One way (but not the only way) to set this one:
+1. Turn on "Authenticator App" 2 factor authentication in Mint (https://accounts-help.intuit.com/app/intuit/1995123)
+2. At the step where you are asked to scan the QR code, **make sure that you copy the manual setup code** and safeguard it just like you safeguard your password.
+3. You can use the commandline tool `oathtool` to get 2 factor code, e.g.
 ```python
-from yamintapi import Mint, wait_for_code_via_http
+import subprocess
+def get_2fa():
+  subprocess.check_output(['oathtool', '--totp', '--base32', <YOUR_2FA_SETUP_CODE>])
 
-mint = Mint().login(
-  email, password, 
-  get_two_factor_code_func=lambda: wait_for_code_via_http(port=2222, url_keyword='mintcode', timeout=120)
-)
+mint = Mint().login(email, password, get_two_factor_code_func=get_2fa)
 ```
-
-Next step is to forward the 2 factor code. With Gmail, you can use [App Script](https://script.google.com/) to do that automatically in response to new emails.  You want to schedule this script to be run around the same time that your server script is running. 
-
-This is an example script that looks for an email with subject "Your Mint Account" then sends the http request with the 2-factor code:
-```js
-function forwardMintMail() { 
-  const urlBase = 'http://<your-server-ip>:2222/mintcode?'
-  
-  const threads = GmailApp.getInboxThreads()
-  for (var x in threads) {
-    var thread = threads[x];
-    if (thread.getFirstMessageSubject() !== "Your Mint Account") {
-      continue; 
-    }    
-    var msgs = thread.getMessages()
-    for (var j in msgs) {
-      var msg = msgs[j];
-      if (!msg.isUnread()) {
-        continue;
-      }
-      
-      var match = msg.getPlainBody().match(/[0-9]{6}/);
-      if (match) {
-        var verificationCode = match[0];
-        const url = urlBase + verificationCode;
-        try {
-          var response = UrlFetchApp.fetch(url, {'muteHttpExceptions': true});
-          // optional: mark 2-factor email as read and archive if successfully sent
-          msg.markRead();
-          thread.moveToArchive();
-        } catch(e) {
-          Logger.log('Failed to send code')  
-        }
-      }
-    }
-  }  
-}
-```
-
-The process in sequence diagram:
-![image](https://user-images.githubusercontent.com/9114601/87220979-985b6c00-c336-11ea-941a-094fc46abb09.png)
-
 
 ## See also
 
