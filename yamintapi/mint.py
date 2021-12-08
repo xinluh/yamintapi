@@ -419,7 +419,6 @@ class Mint():
 
         return trans
 
-
     def add_cash_transaction(self,
                              description: str,
                              amount: float,
@@ -448,7 +447,71 @@ class Mint():
         for tag in tags:
             data['tag{}'.format(self.tag_name_to_id(tag))] = 2
 
-        return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v})
+        return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
+
+    def _get_category_response(self, data) -> int:
+        """
+        If successful, return the cateogry id.
+        """
+        result = self.session.post(os.path.join(_MINT_ROOT_URL, 'updateCategory.xevent'), data=data).text
+        try:
+            return int(re.search(r'<catId>([0-9]+)</catId>', result)[1])
+        except TypeError as e:
+            raise RuntimeError('Received unexpected response ' + result) from e
+
+    def _get_category_by_id(self, category_id) -> dict:
+        categories = self.get_categories()
+        try:
+            return [c for c in categories if c['id'] == category_id][0]
+        except:
+            raise RuntimeError(f'category_id {category_id} seems to not exist')
+
+    def create_category(self, name: str, parent_category_id: int) -> int:
+        """ Returns new cateogry id if successful """
+        parent_category = self._get_category_by_id(parent_category_id)
+
+        if parent_category['depth'] != 1:
+            raise RuntimeError(f'Cannot only create cateogry under sub category: {parent_category}')
+
+        data = {
+            'pcatId': parent_category_id,
+            'catId': 0,
+            'category': name,
+            'task': 'C',
+            'token': self._js_token,
+        }
+
+        return self._get_category_response(data)
+
+    def rename_category(self, category_id: int, name: str) -> bool:
+        category = self._get_category_by_id(category_id)
+
+        if category_id < 10000:
+            raise RuntimeError('Cannot only change user category')
+
+        data = {
+            'pcatId': category['parentId'],
+            'catId': category_id,
+            'category': name,
+            'task': 'U',
+            'token': self._js_token,
+        }
+
+        return self._get_category_response(data) > 0
+
+    def delete_category(self, category_id: int) -> bool:
+        category = self._get_category_by_id(category_id)
+
+        if category_id < 10000:
+            raise RuntimeError('Cannot only change user category')
+
+        data = {
+            'catId': category_id,
+            'task': 'D',
+            'token': self._js_token,
+        }
+
+        return self._get_category_response(data) > 0
 
     @lru_cache()
     def get_categories(self) -> Seq[dict]:

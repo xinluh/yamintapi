@@ -27,7 +27,7 @@ Alternatively, logging in using an existent browser session with no selenium/pha
 mint = Mint()
 mint._js_token = ... # find the attribute value for element id=javascript-user from any page in Mint after logging in
 # for each cookie in mint session
-mint.session.cookies[...] = ... 
+mint.session.cookies[...] = ...
 ```
 
 ### Get information
@@ -52,7 +52,7 @@ Another option to get all transactions, much faster but with less details:
 import io
 csv_string = mint.get_transaction_csv()
 
-# then parse with 
+# then parse with
 import csv
 transactions = [row for row in csv.DictReader(io.StringIO(csv_string))]
 
@@ -74,6 +74,12 @@ Add a cash transaction (default to today)
 mint.add_cash_transaction('dinner', amount=-10.0, category_name='Restaurants', tags=['tag1', 'tag2'])
 ```
 
+### Add / change custom category
+```python
+new_category_id = mint.create_category('boba tea shop', 2)  # 2 is the category id for the "Food & Dining" category
+mint.rename_category(new_category_id, 'specialized boba shop')
+mint.rename_category(new_category_id)
+```
 
 ## Advanced 2-factor setup
 For using this library in a way that doesn't require any user interaction (for example, a cronjob in a server), 2-factor verification may be a blocker, especially if Mint server determined that a certain IP address is high risk and frequently requires 2-factor code.
