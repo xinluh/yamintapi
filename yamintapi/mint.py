@@ -560,9 +560,9 @@ class Mint():
         if name in self.get_tags():
             raise Exception('{} is already a tag'.format(name))
         data = {'nameOfTag': name, 'task': 'C', 'token': self._js_token}
-        result = self.session.post(os.path.join(_MINT_ROOT_URL, '/updateTag.xevent'), data=data).text
+        result = self.session.post(os.path.join(_MINT_ROOT_URL, 'updateTag.xevent'), data=data).text
         try:
-            return int(re.match(r'<tagId>([0-9]+)</tagId>', result)[1])
+            return int(re.search(r'<tagId>([0-9]+)</tagId>', result)[1])
         except TypeError:
             raise RuntimeError('Received unexpected response ' + result)
 
