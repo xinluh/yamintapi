@@ -614,7 +614,8 @@ class Mint():
                 except NoSuchElementException:
                     pass
                 time.sleep(check_freq)
-                logger.debug('Waiting for id={} to be clickable'.format(elem_id))
+                if debug:
+                    logger.info('Waiting for id={} to be clickable'.format(elem_id))
 
             driver.get_screenshot_as_file('/tmp/mint/login_click_failed.png')
             raise Exception('Fail to find id={} to click on'.format(elem_id))
@@ -622,20 +623,13 @@ class Mint():
         logger.info('Waiting for login page to load...')
 
         try:
-            # try old login page first (user name and password on same page)
-            wait_and_click_by_id('ius-userid').send_keys(email)
-            wait_and_click_by_id('ius-password').send_keys(password)
-            wait_and_click_by_id('ius-sign-in-submit-btn')
-        except (NoSuchElementException, ElementNotVisibleException, ElementNotInteractableException):
-            # new login page
-            try:
-                wait_and_click_by_id('ius-identifier').send_keys(email)
-                wait_and_click_by_id('ius-sign-in-submit-btn')
-                wait_and_click_by_id('ius-sign-in-mfa-password-collection-current-password').send_keys(password)
-                wait_and_click_by_id('ius-sign-in-mfa-password-collection-continue-btn')
-            except Exception:
-                driver.get_screenshot_as_file('/tmp/mint/login_input_failed.png')
-                raise
+            wait_and_click_by_id('ius-identifier').send_keys(email)
+            wait_and_click_by_id('ius-identifier-first-submit-btn')
+            wait_and_click_by_id('ius-sign-in-mfa-password-collection-current-password').send_keys(password)
+            wait_and_click_by_id('ius-sign-in-mfa-password-collection-continue-btn')
+        except Exception:
+            driver.get_screenshot_as_file('/tmp/mint/login_input_failed.png')
+            raise
 
         def get_js_token(driver):
             if driver.current_url.startswith(overview_url):
