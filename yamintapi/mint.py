@@ -617,7 +617,7 @@ class Mint():
                 if debug:
                     logger.info('Waiting for id={} to be clickable'.format(elem_id))
 
-            driver.get_screenshot_as_file('/tmp/mint/login_click_failed.png')
+            driver.get_screenshot_as_file('/tmp/mint_error.png')
             raise Exception('Fail to find id={} to click on'.format(elem_id))
 
         logger.info('Waiting for login page to load...')
@@ -628,7 +628,7 @@ class Mint():
             wait_and_click_by_id('ius-sign-in-mfa-password-collection-current-password').send_keys(password)
             wait_and_click_by_id('ius-sign-in-mfa-password-collection-continue-btn')
         except Exception:
-            driver.get_screenshot_as_file('/tmp/mint/login_input_failed.png')
+            driver.get_screenshot_as_file('/tmp/mint_error.png')
             raise
 
         def get_js_token(driver):
@@ -691,8 +691,8 @@ class Mint():
             logger.debug('Current page title: ' + driver.title)
 
         if not self._js_token:
-            driver.get_screenshot_as_file('/tmp/mint/login_failed.png')
-            raise RuntimeError('Failed to get js token from overview page; screenshot output to /tmp/mint/login_failed.png')
+            driver.get_screenshot_as_file('/tmp/mint_error.png')
+            raise RuntimeError('Failed to get js token from overview page; screenshot output to /tmp/mint_error.png')
 
         for cookie_json in driver.get_cookies():
             self.session.cookies.set(**{k: v for k, v in cookie_json.items()
