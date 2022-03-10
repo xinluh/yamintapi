@@ -18,7 +18,7 @@ import logging
 logger  = logging.getLogger(__name__)
 
 
-_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9) AppleWebKit/537.71 (KHTML, like Gecko) Version/7.0 Safari/537.71'
+_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
 _MINT_ROOT_URL = 'https://mint.intuit.com'
 
 class Mint():
@@ -831,7 +831,7 @@ class Mint():
         full_url = os.path.join(_MINT_ROOT_URL, 'mas', url.strip('/')) if url.startswith('/') else url
 
         headers = {
-            'Authorization': 'Intuit_APIKey intuit_apikey=prdakyrespQBtEtvaclVBEgFGm7NQflbRaCHRhAy, intuit_apikey_version=1.0',
+            "authorization": "Intuit_APIKey intuit_apikey=prdakyrespQBtEtvaclVBEgFGm7NQflbRaCHRhAy, intuit_apikey_version=1.0",
             "content-type": "application/json",
             "intuit_appid": "1040",
             "intuit_country": "US",
@@ -844,7 +844,7 @@ class Mint():
 
         logger.debug('_get_financial_provider_response[{}]'.format(full_url))
 
-        res = self.session.request(method=method, url=full_url, headers=headers, data=json.dumps(data))
+        res = self.session.request(method=method, url=full_url, headers=headers, data=json.dumps(data) if data else None)
 
         self._init_session(prev_cookies)
 
