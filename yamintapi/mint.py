@@ -687,6 +687,15 @@ class Mint():
             except (NoSuchElementException, ElementNotVisibleException):
                 pass
 
+            # skip prompt to login in other ways
+            try:
+                element = driver.find_element_by_id('skipWebauthnRegistration')
+                if element.is_displayed and element.is_enabled:
+                    element.click()
+                    logger.info('Skipping other auth option step')
+            except (NoSuchElementException, ElementNotVisibleException):
+                pass
+
             time.sleep(2)
             logger.debug('Current page title: ' + driver.title)
 
