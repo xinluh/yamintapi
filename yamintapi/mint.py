@@ -181,7 +181,29 @@ class Mint():
         raw_transaction['amount'] = float(raw_transaction['amount'].strip('$').replace(',', '')) * (-1 if raw_transaction['isDebit'] else 1)
         return raw_transaction
 
-    def get_transactions(
+    def get_transactions(self):
+        transactions = []
+
+        while True:
+            result = self._post_pfm_response('/v1/transactions/search', {
+                "limit":100,
+                "offset":len(transactions),
+                # TODO: make these params
+                "searchFilters":[],
+                "dateFilter":{"type":"CUSTOM","endDate":"2023-03-09","startDate":"2007-01-01"},
+                "sort":"DATE_DESCENDING"
+            })
+
+            transactions += result['Transaction']
+
+            total_size = result.get('metaData',{}).get('totalSize', 0)
+
+            if len(transactions) >= total_size:
+                break
+
+        return transactions
+
+    def get_transactions_old(
             self,
             include_investment=True,
             limit=None,
@@ -515,16 +537,7 @@ class Mint():
 
     @lru_cache()
     def get_categories(self) -> Seq[dict]:
-        data = {
-            'args': {
-                'excludedCategories': [],
-                'sortByPrecedence': False,
-                'categoryTypeFilter': 'FREE'
-            },
-            'service': 'MintCategoryService',
-            'task': 'getCategoryTreeDto2'
-        }
-        return self._get_service_response(data)['allCategories']
+        return self._get_pfm_response('/v1/categories')
 
     def category_name_to_id(self, category_name, parent_category_name=None) -> int:
         categories = [c for c in self.get_categories() if c['name'] == category_name]
@@ -543,11 +556,8 @@ class Mint():
     def get_tags(self) -> dict:
         ''' Return dict keyed by tag name, values are more information about the tag (including id) '''
 
-        # alternative api with less detail: list(self._get_jsondata_response_generator({'task': 'tags'}))
-        data = {"args": {},
-                "service": "MintTransactionService",
-                "task": "getTagsByFrequency"}
-        return {t['name']: t for t in self._get_service_response(data)}
+        data = self._get_pfm_response('/v1/tags')['Tag']
+        return {t['name']: t for t in data}
 
     def tag_name_to_id(self, name) -> int:
         tag_id = self.get_tags().get(name, {}).get('id', None)
@@ -596,7 +606,7 @@ class Mint():
         driver.set_window_size(1280, 768)
         driver.implicitly_wait(0)
 
-        overview_url = os.path.join(_MINT_ROOT_URL, 'overview.event')
+        overview_url = os.path.join(_MINT_ROOT_URL, 'overview')
         driver.get(overview_url)
 
         def wait_and_click_by_id(elem_id, timeout=10, check_freq=1, by_testid=False):
@@ -631,20 +641,9 @@ class Mint():
             driver.get_screenshot_as_file('/tmp/mint_error.png')
             raise
 
-        def get_js_token(driver):
-            if driver.current_url.startswith(overview_url):
-                try:
-                    user_elem = driver.find_element_by_id('javascript-user')
-                except NoSuchElementException:
-                    return None
-                else:
-                    return json.loads(user_elem.get_attribute('value') or {}).get('token')
-
         logger.info('Logging in...')
         for _ in range(10):
-            self._js_token = get_js_token(driver)
-
-            if self._js_token:
+            if driver.current_url.startswith(overview_url):
                 break
 
             # try new authentication app option (soft token) first
@@ -698,10 +697,6 @@ class Mint():
 
             time.sleep(2)
             logger.debug('Current page title: ' + driver.title)
-
-        if not self._js_token:
-            driver.get_screenshot_as_file('/tmp/mint_error.png')
-            raise RuntimeError('Failed to get js token from overview page; screenshot output to /tmp/mint_error.png')
 
         for cookie_json in driver.get_cookies():
             self.session.cookies.set(**{k: v for k, v in cookie_json.items()
@@ -779,22 +774,14 @@ class Mint():
         return self
 
     def is_logged_in(self, check=False) -> bool:
-        if not check:
-            return self._js_token is not None
+        if check:
+            self.get_categories.cache_clear()
 
-        resp = self._get_json_response('userStatus.xevent', params={'rnd': random.randint(0, 10**14)}, method='get')
-        return 'isRefreshing' in resp
-
-    def change_transaction_page_limit(self, page_size=100):
-        """
-        Change how default number of transactions returned per page (it seems only 25, 50, 100 work)
-        """
-        params = {
-            "task": "transactionResults",
-            "data": page_size,
-            "token": self._js_token,
-        }
-        return self._get_json_response('updatePreference.xevent', data=params, expect_json=False)
+        try:
+            self.get_categories()
+            return True
+        except:
+            return False
 
     def _get_json_response(self, url, params: dict = None, data: dict = None, method='post', expect_json=True, unescape_html=False) -> dict:
         response = self.session.request(method=method,
@@ -891,6 +878,43 @@ class Mint():
         driver.find_element_by_id('ius-mfa-otp-submit-btn').click()
         driver.implicitly_wait(0)
 
+    def _get_pfm_response(self, url):
+        headers = {
+            "authorization": "Intuit_APIKey intuit_apikey=prdakyresYC6zv9z3rARKl4hMGycOWmIb4n8w52r,intuit_apikey_version=1.0",
+            "content-type": "application/json",
+            "intuit_tid": "mw-190-1377ef39-640c-42ac-87e6-e2e68bd3bf32",
+            "pragma": "no-cache",
+        }
+
+        ROOT_URL = 'https://mint.intuit.com/pfm'
+
+        resp = self.session.get(ROOT_URL + url, headers=headers)
+
+        try:
+            return resp.json()
+        except:
+            logger.info('Get pfm response {} failed: {}'.format(url, resp.text))
+            raise
+
+    def _post_pfm_response(self, url, data):
+        headers = {
+            "authorization": "Intuit_APIKey intuit_apikey=prdakyresYC6zv9z3rARKl4hMGycOWmIb4n8w52r,intuit_apikey_version=1.0",
+            "content-type": "application/json",
+            "intuit_tid": "mw-190-1377ef39-640c-42ac-87e6-e2e68bd3bf32",
+            "pragma": "no-cache",
+        }
+
+        ROOT_URL = 'https://mint.intuit.com/pfm'
+        resp =  self.session.post(
+            ROOT_URL + url,
+            headers=headers, data=json.dumps(data)
+        )
+
+        try:
+            return resp.json()
+        except:
+            logger.info('Post pfm response {} failed: {}'.format(url, resp.text))
+            raise
 
 class MintSessionExpiredException(Exception):
     pass
