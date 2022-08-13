@@ -635,8 +635,8 @@ class Mint():
         try:
             wait_and_click_by_id('ius-identifier').send_keys(email)
             wait_and_click_by_id('ius-identifier-first-submit-btn')
-            wait_and_click_by_id('ius-sign-in-mfa-password-collection-current-password').send_keys(password)
-            wait_and_click_by_id('ius-sign-in-mfa-password-collection-continue-btn')
+            wait_and_click_by_id('iux-password-confirmation-password').send_keys(password)
+            wait_and_click_by_id('passwordVerificationContinueButton', by_testid=True)
         except Exception:
             driver.get_screenshot_as_file('/tmp/mint_error.png')
             raise
