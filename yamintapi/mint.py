@@ -81,14 +81,7 @@ class Mint():
         self.initiate_account_refresh_all()
 
     def get_accounts(self) -> Seq[dict]:
-        params = {
-            'args': {
-                'types': ['BANK', 'CREDIT', 'INVESTMENT', 'LOAN', 'MORTGAGE', 'OTHER_PROPERTY', 'REAL_ESTATE', 'VEHICLE', 'UNCLASSIFIED']
-            },
-            'service': 'MintAccountService',
-            'task': 'getAccountsSorted'
-        }
-        return self._get_service_response(params)
+        return self._get_pfm_response('/v1/accounts?offset=0&limit=1000')['Account']
 
     def get_financial_providers(self) -> dict:
         return self._get_financial_provider_response('/v1/providers').json()
@@ -275,9 +268,10 @@ class Mint():
                                 ('?accountId=0' if include_investment else '')).content
 
     def update_transaction(self,
-                           transaction_id: Union[int, List[int]],
+                           transaction_id: Union[str, List[str]],
                            description: str = None,
-                           category_name: str = None, category_id: int = None,
+                           category_name: str = None,
+                           category_id: int = None,
                            is_duplicate: bool = None,
                            note: str = None,
                            transaction_date: date = None,
@@ -287,9 +281,7 @@ class Mint():
         '''
         transaction_id can be obtained from get_transactions().
 
-        It can be a single id, or a list of ids.  Example "12345:0" or "23456:1", where the :0 or :1 ending is txnType
-        (0 is cash/credit transaction, 1 is investment transactions). If only the id with txnType suffix is added, the
-        transaction will be presumed to be a credit/cash one.
+        It can be a single id, or a list of ids.
 
         To add/remove tag, pass `tags={'tag_name': True/False}`. Tags not present in `tags` will remain unchanged.
 
@@ -304,31 +296,25 @@ class Mint():
 
         trans_ids = transaction_id if isinstance(transaction_id, list) else [transaction_id]
 
-        data = {
-            'task': 'txnedit', 'token': self._js_token,
-            'txnId': ','.join(['{}:0'.format(i) if ':' not in str(i) else i for i in trans_ids]),
-            'note': note,
-            'merchant': description,
-            'catId': category_id,
-            'category': category_name,
-            'date': transaction_date.strftime('%m/%d/%Y') if transaction_date else None,
-            'duplicate': 'on' if is_duplicate == True else None,
-            'amount': amount
-        }
+        data = [{
+            'id': tid,
+            'type': 'CashAndCreditTransaction' if tid.endswith('_0') else 'InvestmentTransaction',
+            **{k: v for k, v in {
+                'description': description,
+                # 'tagData': {tags: [{id: "6077283_1806267"}]} # TODO
+                'category': {"id": category_id} if category_id is not None else None,
+                'isDuplicate': is_duplicate if is_duplicate is not None else None,
+                'notes': note,
+                'date': transaction_date.strftime('%Y-%m-%d') if transaction_date else None,
+                'amount': str(amount) if amount is not None else None
+            }.items() if v is not None}
+        } for tid in trans_ids]
 
-        for tag, checked in tags.items():
-            data['tag{}'.format(self.tag_name_to_id(tag))] = 2 if checked else 0
+        logger.info('update_transaction {}'.format(data))
 
-        params = {k: v for k, v in data.items() if v is not None}
-        logger.info('update_transaction {}'.format(params))
+        self._put_pfm_response('/v1/transactions/', data={"Transaction": data})
 
-        resp = self._get_json_response('updateTransaction.xevent', data=params)
-        success = resp.get('task') == 'txnEdit'
-
-        if not success:
-            logger.error('update_transaction failed,resp: {}'.format(resp))
-
-        return success
+        return True
 
 
     def _validate_category(self, category_id, category_name) -> [int, str]:
@@ -457,6 +443,7 @@ class Mint():
         if not category_id and category_name:
             category_id = self.category_name_to_id(category_name)
 
+        # {"date":"2022-08-12","description":"blah","category":{"id":"{}_1406","name":null},"accountId":null,"amount":-3,"parentId":null,"type":"CashAndCreditTransaction","id":null,"isExpense":true,"isPending":false,"isDuplicate":false,"tagData":null,"splitData":null,"manualTransactionType":"CASH","checkNumber":null,"isLinkedToRule":false,"shouldPullFromAtmWithdrawals":false}
         data = {'txnId': ':0', 'task': 'txnadd', 'token': self._js_token, 'mtType': 'cash',
                 'mtCashSplitPref': 2,  # unclear what this is
                 'note': note,
@@ -537,7 +524,7 @@ class Mint():
 
     @lru_cache()
     def get_categories(self) -> Seq[dict]:
-        return self._get_pfm_response('/v1/categories')
+        return self._get_pfm_response('/v1/categories')['Category']
 
     def category_name_to_id(self, category_name, parent_category_name=None) -> int:
         categories = [c for c in self.get_categories() if c['name'] == category_name]
@@ -750,7 +737,6 @@ class Mint():
             with open(cache_file, 'rb') as f:
                 cached = pickle.load(f)
             if cached['version'] == CACHE_VERSION and cached['email'] == email:
-                self._js_token = cached['js_token']
                 self.session.cookies = cached['cookies']
 
                 try:
@@ -766,7 +752,6 @@ class Mint():
             logger.info('Caching login to file {}'.format(cache_file))
             pickle.dump({
                 'version': CACHE_VERSION,
-                'js_token': self._js_token,
                 'cookies': self.session.cookies,
                 'email': email,
             }, f)
@@ -878,7 +863,7 @@ class Mint():
         driver.find_element_by_id('ius-mfa-otp-submit-btn').click()
         driver.implicitly_wait(0)
 
-    def _get_pfm_response(self, url):
+    def _pfm_request(self, method, url, **kwargs):
         headers = {
             "authorization": "Intuit_APIKey intuit_apikey=prdakyresYC6zv9z3rARKl4hMGycOWmIb4n8w52r,intuit_apikey_version=1.0",
             "content-type": "application/json",
@@ -888,33 +873,24 @@ class Mint():
 
         ROOT_URL = 'https://mint.intuit.com/pfm'
 
-        resp = self.session.get(ROOT_URL + url, headers=headers)
+        resp = self.session.request(method, ROOT_URL + url, headers=headers, **kwargs)
 
         try:
+            resp.raise_for_status()
+
             return resp.json()
         except:
-            logger.info('Get pfm response {} failed: {}'.format(url, resp.text))
+            logger.info('{} pfm response {} failed: {}'.format(method, url, resp.text))
             raise
+
+    def _get_pfm_response(self, url):
+        return self._pfm_request('GET', url)
 
     def _post_pfm_response(self, url, data):
-        headers = {
-            "authorization": "Intuit_APIKey intuit_apikey=prdakyresYC6zv9z3rARKl4hMGycOWmIb4n8w52r,intuit_apikey_version=1.0",
-            "content-type": "application/json",
-            "intuit_tid": "mw-190-1377ef39-640c-42ac-87e6-e2e68bd3bf32",
-            "pragma": "no-cache",
-        }
+        return self._pfm_request('POST', url, json=data)
 
-        ROOT_URL = 'https://mint.intuit.com/pfm'
-        resp =  self.session.post(
-            ROOT_URL + url,
-            headers=headers, data=json.dumps(data)
-        )
-
-        try:
-            return resp.json()
-        except:
-            logger.info('Post pfm response {} failed: {}'.format(url, resp.text))
-            raise
+    def _put_pfm_response(self, url, data):
+        return self._pfm_request('PUT', url, json=data)
 
 class MintSessionExpiredException(Exception):
     pass
