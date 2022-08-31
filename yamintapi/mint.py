@@ -599,6 +599,11 @@ class Mint():
         def wait_and_click_by_id(elem_id, timeout=10, check_freq=1, by_testid=False):
             ''' more debug message and finer control over selenium's wait functionality '''
             for _ in range(timeout // check_freq):
+
+                # hacky escape hatch
+                if driver.current_url.startswith(overview_url):
+                    return
+
                 try:
                     if not by_testid:
                         element = driver.find_element_by_id(elem_id)
@@ -608,7 +613,7 @@ class Mint():
                     if element.is_displayed and element.is_enabled:
                         element.click()
                         return element
-                except NoSuchElementException:
+                except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException, ElementNotInteractableException):
                     pass
                 time.sleep(check_freq)
                 if debug:
@@ -668,7 +673,7 @@ class Mint():
             try:
                 element = driver.find_element_by_id('ius-verified-user-update-btn-skip')
                 if element.is_displayed and element.is_enabled:
-                    element.click()
+                    wait_and_click_by_id('ius-verified-user-update-btn-skip')
                     logger.info('Skipping phone verification step')
             except (NoSuchElementException, ElementNotVisibleException):
                 pass
@@ -677,7 +682,7 @@ class Mint():
             try:
                 element = driver.find_element_by_id('skipWebauthnRegistration')
                 if element.is_displayed and element.is_enabled:
-                    element.click()
+                    wait_and_click_by_id('skipWebauthnRegistration')
                     logger.info('Skipping other auth option step')
             except (NoSuchElementException, ElementNotVisibleException):
                 pass
