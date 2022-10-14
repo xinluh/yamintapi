@@ -625,8 +625,8 @@ class Mint():
         logger.info('Waiting for login page to load...')
 
         try:
-            wait_and_click_by_id('ius-identifier').send_keys(email)
-            wait_and_click_by_id('ius-identifier-first-submit-btn')
+            wait_and_click_by_id('iux-identifier-first-unknown-identifier').send_keys(email)
+            wait_and_click_by_id('IdentifierFirstSubmitButton', by_testid=True)
             wait_and_click_by_id('iux-password-confirmation-password').send_keys(password)
             wait_and_click_by_id('passwordVerificationContinueButton', by_testid=True)
         except Exception:
