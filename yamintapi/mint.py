@@ -11,7 +11,7 @@ import random
 from itertools import islice
 from functools import lru_cache
 from datetime import datetime, date
-from typing import Sequence as Seq, Mapping, Union, List
+from typing import Sequence as Seq, Mapping, Union, List, Literal
 import logging
 
 
@@ -32,6 +32,14 @@ class Mint():
 
         if cookies:
             self.session.cookies = cookies
+
+    @lru_cache
+    def get_user(self) -> dict:
+        return self._get_pfm_response('/v1/user')
+
+    @lru_cache
+    def get_account_id(self) -> str:
+        return self.get_user()['id']
 
     def initiate_account_refresh_all(self):
         providers = self.get_financial_providers()
@@ -176,110 +184,49 @@ class Mint():
         res = self._get_financial_provider_response(url, method='patch', data=params)
         res.raise_for_status()
 
+    def get_transactions(self,
+                         account_id: str = None,
+                         account_type: Literal['CashAccount', 'InvestmentAccount', 'CreditAccount', 'BankAccount'] = None,
+                         start_date = '2007-01-01',
+                         end_date = '2030-01-01',
+                         page_size = 100,
+                         sort_by: Literal['date', 'merchant', 'amount', 'category'] = 'date',
+                         sort_asc = False):
+        if account_id is not None:
+            search_filters = [{"matchAll": True, "filters": [{"type": "AccountIdFilter", "accountId": account_id}]}]
+        elif account_type is not None:
+            search_filters = [{"matchAll": True, "filters": [{"type": "AccountTypeFilter", "accountType": account_type}]}]
+        else:
+            search_filters = []
 
-    def _clean_transaction(self, raw_transaction):
-        def fix_date(date_str):
-            # Mint returns dates like 'Feb 23' for transactions in the current year; reformat to standard date instead
-            return (date_str if '/' in date_str
-                    else datetime.strptime(date_str + str(date.today().year), '%b %d%Y').strftime('%m/%d/%y'))
+        search_data = {
+            "limit": page_size,
+            "searchFilters": search_filters,
+            "dateFilter": {"type":"CUSTOM", "endDate": end_date, "startDate": start_date},
+            "sort": sort_by.upper() +  ('' if sort_asc else '_DESCENDING'),
+        }
 
-        for date_key in ('date', 'odate'):
-            raw_transaction[date_key] = fix_date(raw_transaction[date_key])
-        raw_transaction['amount'] = float(raw_transaction['amount'].strip('$').replace(',', '')) * (-1 if raw_transaction['isDebit'] else 1)
-        return raw_transaction
-
-    def get_transactions(self):
         transactions = []
-
         while True:
-            result = self._post_pfm_response('/v1/transactions/search', {
-                "limit":100,
-                "offset":len(transactions),
-                # TODO: make these params
-                "searchFilters":[],
-                "dateFilter":{"type":"CUSTOM","endDate":"2023-03-09","startDate":"2007-01-01"},
-                "sort":"DATE_DESCENDING"
-            })
+            result = self._post_pfm_response('/v1/transactions/search', {**search_data, "offset": len(transactions)})
 
             transactions += result['Transaction']
 
             total_size = result.get('metaData',{}).get('totalSize', 0)
-
             if len(transactions) >= total_size:
                 break
 
         return transactions
 
-    def get_transactions_old(
-            self,
-            include_investment=True,
-            limit=None,
-            offset=0,
-            sort_field='date',
-            sort_ascending=False,
-            query=None,
-            start_date=None,
-            end_date=None,
-            account_id=None,
-            do_basic_cleaning=True
-    ) -> Seq[dict]:
-        '''
-        Return detailed transactions. Suggest running with e.g. get_transactions(limit=100) since getting all transactions is
-        a slow operation.
-        '''
-        comparableType = {
-            ('date', True): 4,
-            ('date', False): 8,
-            ('amount', True): 7,
-            ('amount', False): 3,
-            ('merchant', True): 1,
-            ('merchant', False): 5,
-            ('category', True): 2,
-            ('category', True): 6,
-        }.get((sort_field, sort_ascending), None)
+    def get_transaction_by_id(self, transaction_id: Union[str, int]):
+        """
+        transaction_id can either the full form <account_id>_123456_1, or a number, e.g. 123456. If it is a number
+        the transaction is assume to be a non-investment transaction.
+        """
+        if isinstance(transaction_id, int) or '_' not in transaction_id:
+            transaction_id = '{}_{}_0'.format(self.get_account_id(), transaction_id)
 
-        if comparableType is None:
-            raise ValueError('Sort field {} and ascending {} is not supported'.format(sort_field, sort_ascending))
-
-        params = {
-            'queryNew': '',
-            'comparableType': comparableType,
-            'task': 'transactions',
-            'query': query,
-            'startDate': start_date,
-            'endDate': end_date,
-        }
-
-        if account_id is not None:
-            params['accountId'] = account_id
-            params['acctChanged'] = 'T'
-        elif include_investment:
-            params['accountId'] = 0
-        else:
-            params['filterType'] = 'cash'
-            params['task'] = 'transactions,txnfilter',
-
-
-        params = {k: v for k, v in params.items() if v is not None}
-
-        transactions = self._get_jsondata_response_generator(params, initial_offset=offset)
-        transactions = (islice(transactions, limit) if limit else transactions)
-
-        if not do_basic_cleaning:
-            return list(transactions)
-        else:
-            return list(map(self._clean_transaction, transactions))
-
-
-    def get_transactions_csv(self, include_investment=True) -> str:
-        '''
-        Return csv result from "Export all transaction" link in the transaction page. Result can be read with the `csv`
-        module or `pandas`.
-
-        This contains less detail than get_transactions() but is significantly faster.
-        '''
-        return self.session.get(os.path.join(_MINT_ROOT_URL, 'transactionDownload.event') +
-                                ('?accountId=0' if include_investment else '')).content
+        return self._get_pfm_response('/v1/transactions/{}'.format(transaction_id))
 
     def update_transaction(self,
                            transaction_id: Union[str, List[str]],
@@ -310,12 +257,24 @@ class Mint():
 
         trans_ids = transaction_id if isinstance(transaction_id, list) else [transaction_id]
 
+        tags_by_tran_ids = {}
+        if tags != {}:
+            trans = {tid: self.get_transaction_by_id(tid) for tid in trans_ids}
+            for tid, tr in trans.items():
+                # looks like {..., 'tagData': {tags: [{id: "123456_567890"}]} }
+                tag_ids = {tag['id'] for tag in tr.get('tagData', {'tags': []})['tags']}
+                tag_updates = {self.tag_name_to_id(tag): checked for tag, checked in tags.items()}
+                tag_ids |= {tag_id for tag_id, checked in tag_updates.items() if checked}
+                tag_ids -= {tag_id for tag_id, checked in tag_updates.items() if not checked}
+
+                tags_by_tran_ids[tid] = tag_ids
+
         data = [{
             'id': tid,
             'type': 'CashAndCreditTransaction' if tid.endswith('_0') else 'InvestmentTransaction',
             **{k: v for k, v in {
                 'description': description,
-                # 'tagData': {tags: [{id: "6077283_1806267"}]} # TODO
+                'tagData': {"tags": [{"id": tag_id} for tag_id in tags_by_tran_ids[tid]]} if tags != {} else None,
                 'category': {"id": category_id} if category_id is not None else None,
                 'isDuplicate': is_duplicate if is_duplicate is not None else None,
                 'notes': note,
@@ -330,6 +289,109 @@ class Mint():
 
         return True
 
+    def split_transaction(self, transaction_id: Union[str, int], split_transactions: List[dict]) -> dict:
+        """
+        Split transactions. Return the split transaction, with a `childrend` attribute containing the splits.
+
+        To unsplit the transaction, simply provide an empty list to split_transactions.
+        If the sum of split_transactions doesn't match the origianl amount, Mint will automatically create
+        one more split transaction with the remainder.
+
+        >>> mint.split_transaction(3985739713, [
+        >>>      {'amount': 10, 'description': 'description 1', 'category_name': 'Transfer'},
+        >>>      {'amount': 26.34, 'description': 'description 2', 'category_id': '12345_12345'}
+        >>> ])
+
+        Return the split transactions
+        """
+
+        trans = self.get_transaction_by_id(transaction_id)
+        transaction_id = trans['id']
+
+        if transaction_id.endswith('_1'):
+            raise RuntimeError('Not valid to split investment transactions?')
+
+        input_split_trans = []
+        for tr in split_transactions:
+            category_id, category_name = self._validate_category(tr.get('category_id'), tr.get('category_name'))
+            input_split_trans.append({
+                'amount': tr['amount'],
+                'description': tr['description'],
+                "category": {'id': category_id}
+            })
+
+        data = {
+            'type': 'CashAndCreditTransaction',
+            'amount': trans['amount'],
+            'splitData': { 'children': input_split_trans}
+        }
+
+        self._put_pfm_response('/v1/transactions/{}'.format(transaction_id), data, json_response=False)
+        return self.get_transaction_by_id(transaction_id)
+
+    def unsplit_transaction(self, transaction_id: Union[str, int]) -> dict:
+        """
+        Unsplit a split transaction. `transaction_id` can be either the parent transaction or one of the children.
+        """
+        trans = self.get_transaction_by_id(transaction_id)
+
+        if 'splitData' in trans:
+            return self.split_transaction(trans['id'], [])
+        elif 'parentId' in trans:
+            return self.split_transaction(trans['parentId'], [])
+        else:
+            raise RuntimeError('{} does not look it is a split or child of a split transaction'.format(transaction_id))
+
+    def delete_transaction(self, transaction_id: str):
+        trans = self.get_transaction_by_id(transaction_id)
+
+        if not (trans['isPending'] or trans.get('manualTransactionType') == 'CASH'):
+            raise RuntimeError('transacation_id {} is not a pending or cash transaction. Probably not a good idea to delete'.format(transaction_id))
+
+        self._delete_pfm_response('/v1/transactions/{}'.format(trans['id']), json_response=False)
+
+    def add_cash_transaction(self,
+                             description: str,
+                             amount: float,
+                             category_name: str = None, category_id: int = None,
+                             note: str = None,
+                             transaction_date: date = None,
+                             tags: Seq[str] = [],
+                             is_expense: bool = None,
+                             should_pull_from_atm_withdrawal: bool = False) -> dict:
+        '''
+        If amount if positive, transaction will be created as an income. Else, it is created as an expense.
+
+        Only one of category_name and category_id is needed (category_id takes priority). Usually category_name
+        suffices, unless there are multiple categories with the same name (but under different parent categories).
+        '''
+        category_id, category_name = self._validate_category(category_id, category_name)
+
+        self._post_pfm_response('/v1/transactions', {
+            "type": "CashAndCreditTransaction",
+            "manualTransactionType": "CASH",
+            "date": (transaction_date or date.today()).strftime('%Y-%m-%d'),
+            "description": description,
+            "category": {"id": category_id},
+            "amount": amount,
+            "isExpense": is_expense if is_expense is not None else amount < 0,
+            "tagData": {'tags': [{'id': self.tag_name_to_id(t)} for t in tags]} if len(tags) > 0 else None,
+            "shouldPullFromAtmWithdrawals": should_pull_from_atm_withdrawal,
+        }, json_response=False)
+
+    @lru_cache()
+    def get_categories(self) -> Seq[dict]:
+        return self._get_pfm_response('/v1/categories')['Category']
+
+    def _get_category_by_id(self, category_id: Union[str, int]) -> dict:
+        if isinstance(category_id, int) or '_' not in category_id:
+            category_id = '{}_{}'.format(self.get_account_id(), category_id)
+
+        categories = self.get_categories()
+        try:
+            return [c for c in categories if c['id'] == category_id][0]
+        except:
+            raise RuntimeError('category_id {} seems to not exist'.format(category_id))
 
     def _validate_category(self, category_id, category_name) -> [int, str]:
         if category_id is None and category_name is None:
@@ -344,152 +406,11 @@ class Mint():
                 raise ValueError('{} is not a valid category id'.format(category_id))
 
         return category_id, category_name
+    def _is_category_user_created(self, category_id: Union[str, int]) -> bool:
+        category_id = int(category_id) if isinstance(category_id, int) or '_' not in category_id else int(category_id.split('_')[1])
+        return category_id > 10000;
 
-
-    def split_transaction(self, transaction_id, split_transactions: List[dict]) -> dict:
-        """
-        Split transactions. Return a list of transaction ids, where the first one is the origianl transactions,
-        and subsequent ones are the child transactions.
-
-        To unsplit the transaction, simply provide an empty list to split_transactions.
-        If the sum of split_transactions doesn't match the origianl amount, Mint will automatically create
-        one more split transaction with the remainder.
-
-        >>> mint.split_transaction('3985739713:0', [
-        >>>      {'amount': 10, 'merchant': 'description 1', 'category_name': 'Transfer'},
-        >>>      {'amount': 26.34, 'merchant': 'description 2', 'category_name': 'Transfer'}
-        >>> ])
-
-        Return the split transactions
-        """
-        full_trans_id = transaction_id if ':' in transaction_id else '{}:0'.format(transaction_id)
-
-        params = {
-            'task': 'split',
-            'data': '',
-            'txnId': full_trans_id,
-            'token': self._js_token,
-        }
-
-        for idx, tr in enumerate(split_transactions):
-            category_id, category_name = self._validate_category(tr.get('category_id'), tr.get('category_name'))
-            if category_id is None:
-                raise ValueError('Category id or name is missng or invalid')
-
-            params['amount{}'.format(idx)] = tr['amount']
-            params['percentAmount{}'.format(idx)] = tr['amount']
-            params['category{}'.format(idx)] = category_name
-            params['categoryId{}'.format(idx)] = category_id
-            params['merchant{}'.format(idx)] = tr['merchant']
-            params['txnId{}'.format(idx)] = 0
-
-        resp = self._get_json_response('updateTransaction.xevent', data=params)
-
-        if resp.get('task') != 'split':
-            raise RuntimeError('Split transaction failed: {}'.format(resp))
-
-        split_resp = self._get_json_response('listSplitTransactions.xevent', {
-            'txnId': full_trans_id
-        }, method='get', unescape_html=True)
-
-        result_trans = split_resp['children'] if len(split_resp['children']) > 0 else split_resp['parent']
-
-        return [self._clean_transaction(t) for t in result_trans]
-
-
-    def delete_transaction(self, transaction_id: str) -> bool:
-        trans = self.get_transaction_by_id(transaction_id)
-
-        if not trans['isPending'] and not trans['account'] == 'Cash':
-            raise RuntimeError('transacation_id {} is not a pending or cash transaction. Probably not a good idea to delete'.format(transaction_id))
-
-        full_id = '{}:0'.format(transaction_id) if ':' not in transaction_id else transaction_id
-        resp = self._get_json_response('updateTransaction.xevent', data={
-            'task': 'delete',
-            'txnId': full_id,
-            'token': self._js_token,
-        })
-
-        return resp.get('task') == 'delete'
-
-    def get_transaction_by_id(self, transaction_id, do_basic_cleaning=True):
-        """
-        transaction_id can either be a number, e.g. 103867187, in which case it will be assume to be
-        of transaction type 0 (cash / bank); or a fully qualified string, e.g. "103867187:1", which is
-        required for brokerage transactions.
-        """
-        full_trans_id = str(transaction_id)
-        if ':' not in full_trans_id:
-            full_trans_id = '{}:0'.format(full_trans_id)
-        else:
-            transaction_id = int(full_trans_id.split(":")[0])
-
-        res = self._get_json_response('listSplitTransactions.xevent', {
-            'txnId': full_trans_id
-        }, method='get', unescape_html=True)
-
-        if 'parent' not in res or 'children' not in res:
-            raise RuntimeError('Unexpected output from listSplitTransactions: {}'.format(res))
-
-        if str(res['parent'][0]['id']) == str(transaction_id):
-            trans = res['parent'][0]
-        else:
-            trans = next((t for t in res['children'] if str(t['id']) == str(transaction_id)), None)
-
-        if trans is not None and do_basic_cleaning:
-            trans = self._clean_transaction(trans)
-
-        return trans
-
-    def add_cash_transaction(self,
-                             description: str,
-                             amount: float,
-                             category_name: str = None, category_id: int = None,
-                             note: str = None,
-                             transaction_date: date = None,
-                             tags: Seq[str] = []) -> dict:
-        '''
-        If amount if positive, transaction will be created as an income. Else, it is created as an expense.
-
-        Only one of category_name and category_id is needed (category_id takes priority). Usually category_name
-        suffices, unless there are multiple categories with the same name (but under different parent categories).
-        '''
-        if not category_id and category_name:
-            category_id = self.category_name_to_id(category_name)
-
-        # {"date":"2022-08-12","description":"blah","category":{"id":"{}_1406","name":null},"accountId":null,"amount":-3,"parentId":null,"type":"CashAndCreditTransaction","id":null,"isExpense":true,"isPending":false,"isDuplicate":false,"tagData":null,"splitData":null,"manualTransactionType":"CASH","checkNumber":null,"isLinkedToRule":false,"shouldPullFromAtmWithdrawals":false}
-        data = {'txnId': ':0', 'task': 'txnadd', 'token': self._js_token, 'mtType': 'cash',
-                'mtCashSplitPref': 2,  # unclear what this is
-                'note': note,
-                'catId': category_id,
-                'amount': abs(amount),
-                'mtIsExpense': True if amount < 0 else False,
-                'merchant': description,
-                'date': (transaction_date or date.today()).strftime('%m/%d/%Y')}
-
-        for tag in tags:
-            data['tag{}'.format(self.tag_name_to_id(tag))] = 2
-
-        return self._get_json_response('updateTransaction.xevent', data={k: v for k, v in data.items() if v is not None})
-
-    def _get_category_response(self, data) -> int:
-        """
-        If successful, return the cateogry id.
-        """
-        result = self.session.post(os.path.join(_MINT_ROOT_URL, 'updateCategory.xevent'), data=data).text
-        try:
-            return int(re.search(r'<catId>([0-9]+)</catId>', result)[1])
-        except TypeError as e:
-            raise RuntimeError('Received unexpected response ' + result) from e
-
-    def _get_category_by_id(self, category_id) -> dict:
-        categories = self.get_categories()
-        try:
-            return [c for c in categories if c['id'] == category_id][0]
-        except:
-            raise RuntimeError(f'category_id {category_id} seems to not exist')
-
-    def create_category(self, name: str, parent_category_id: int) -> int:
+    def create_category(self, name: str, parent_category_id: Union[int, str]) -> int:
         """ Returns new cateogry id if successful """
         parent_category = self._get_category_by_id(parent_category_id)
 
@@ -497,48 +418,38 @@ class Mint():
             raise RuntimeError(f'Cannot only create cateogry under sub category: {parent_category}')
 
         data = {
-            'pcatId': parent_category_id,
-            'catId': 0,
-            'category': name,
-            'task': 'C',
-            'token': self._js_token,
+            'depth': parent_category['depth'] + 1,
+            'name': name,
+            'parentId': parent_category['id'],
         }
 
-        return self._get_category_response(data)
+        self._post_pfm_response('/v1/categories', data, json_response=False)
 
-    def rename_category(self, category_id: int, name: str) -> bool:
+        self.get_categories.cache_clear()
+        return self.category_name_to_id(name)
+
+    def rename_category(self, category_id: Union[int, str], name: str) -> bool:
         category = self._get_category_by_id(category_id)
 
-        if category_id < 10000:
+        if not self._is_category_user_created(category_id):
             raise RuntimeError('Cannot only change user category')
 
-        data = {
-            'pcatId': category['parentId'],
-            'catId': category_id,
-            'category': name,
-            'task': 'U',
-            'token': self._js_token,
-        }
+        self._put_pfm_response('/v1/categories/{}'.format(category['id']), {
+            'depth': category['depth'],
+            'name': name,
+            'parentId': category['parentId'],
+        }, json_response=False)
 
-        return self._get_category_response(data) > 0
+        self.get_categories.cache_clear()
 
-    def delete_category(self, category_id: int) -> bool:
+    def delete_category(self, category_id: Union[str, int]):
         category = self._get_category_by_id(category_id)
 
-        if category_id < 10000:
+        if not self._is_category_user_created(category_id):
             raise RuntimeError('Cannot only change user category')
 
-        data = {
-            'catId': category_id,
-            'task': 'D',
-            'token': self._js_token,
-        }
-
-        return self._get_category_response(data) > 0
-
-    @lru_cache()
-    def get_categories(self) -> Seq[dict]:
-        return self._get_pfm_response('/v1/categories')['Category']
+        self._delete_pfm_response('/v1/categories/{}'.format(category['id']), json_response=False)
+        self.get_categories.cache_clear()
 
     def category_name_to_id(self, category_name, parent_category_name=None) -> int:
         categories = [c for c in self.get_categories() if c['name'] == category_name]
@@ -568,14 +479,14 @@ class Mint():
 
     def create_tag(self, name) -> int:
         ''' Return the id of newly created tag'''
+
         if name in self.get_tags():
             raise Exception('{} is already a tag'.format(name))
-        data = {'nameOfTag': name, 'task': 'C', 'token': self._js_token}
-        result = self.session.post(os.path.join(_MINT_ROOT_URL, 'updateTag.xevent'), data=data).text
-        try:
-            return int(re.search(r'<tagId>([0-9]+)</tagId>', result)[1])
-        except TypeError:
-            raise RuntimeError('Received unexpected response ' + result)
+
+        self._post_pfm_response('/v1/tags', {"name": name}, json_response=False)
+
+        self.get_tags.cache_clear()
+        return self.get_tags().get(name, {}).get('id', None)
 
     def set_user_property(self, name, value) -> bool:
         params = {'args': {'propertyName': name,
@@ -850,20 +761,6 @@ class Mint():
 
         return res
 
-    def _get_jsondata_response_generator(self, params, initial_offset=0):
-        params = params.copy()
-        offset = initial_offset
-        while True:
-            params['offset'] = offset
-            params['rnd'] = random.randint(0, 10**14)
-            resp = self._get_json_response('app/getJsonData.xevent', params=params, method='get')
-            results = [r for r in resp['set'] if r['id'] == 'transactions'][0].get('data', [])
-            offset += len(results)
-            for result in results:
-                yield result
-            if not results:
-                break
-
     def _two_factor_login(sel, get_two_factor_code_func, driver: 'selenium.webdriver'):
         if not get_two_factor_code_func:
             raise Exception('2 factor login is required but `get_two_factor_code_func` is not provided.\n'
@@ -882,7 +779,7 @@ class Mint():
         driver.find_element_by_id('ius-mfa-otp-submit-btn').click()
         driver.implicitly_wait(0)
 
-    def _pfm_request(self, method, url, **kwargs):
+    def _pfm_request(self, method, url, json_response=True, **kwargs):
         headers = {
             "authorization": "Intuit_APIKey intuit_apikey=prdakyresYC6zv9z3rARKl4hMGycOWmIb4n8w52r,intuit_apikey_version=1.0",
             "content-type": "application/json",
@@ -897,19 +794,22 @@ class Mint():
         try:
             resp.raise_for_status()
 
-            return resp.json()
+            return resp.json() if json_response else resp
         except:
             logger.info('{} pfm response {} failed: {}'.format(method, url, resp.text))
             raise
 
-    def _get_pfm_response(self, url):
-        return self._pfm_request('GET', url)
+    def _get_pfm_response(self, url, **kwargs):
+        return self._pfm_request('GET', url, **kwargs)
 
-    def _post_pfm_response(self, url, data):
-        return self._pfm_request('POST', url, json=data)
+    def _post_pfm_response(self, url, data, **kwargs):
+        return self._pfm_request('POST', url, json=data, **kwargs)
 
-    def _put_pfm_response(self, url, data):
-        return self._pfm_request('PUT', url, json=data)
+    def _put_pfm_response(self, url, data, **kwargs):
+        return self._pfm_request('PUT', url, json=data, **kwargs)
+
+    def _delete_pfm_response(self, url, **kwargs):
+        return self._pfm_request('DELETE', url, **kwargs)
 
 class MintSessionExpiredException(Exception):
     pass
