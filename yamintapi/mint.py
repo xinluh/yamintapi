@@ -142,16 +142,29 @@ class Mint():
         logger.info('set_account_visibility response: {}'.format(res.text))
         return res.ok
 
-    def update_asset_value(self, fi_id: int, value: float) -> dict:
+    def _get_account_by_name(self, name: str, provider_name: str = None, error_if_duplicates=True) -> dict:
+        providers = self.get_financial_providers().get('providers', [])
+        if provider_name is not None:
+            providers = [p for p in providers if p['name'] == provider_name]
+
+        matching_accts = [account for provider in providers for account in provider['providerAccounts']
+                           if account['name'] == name]
+
+        if len(matching_accts) == 0:
+            raise RuntimeError('Account by name {} under with provider name {} is not found'.format(name, provider_name))
+
+        if len(matching_accts) > 1 and error_if_duplicates:
+            raise RuntimeError('There are multiple account by name {} under with provider name {}'.format(name, provider_name))
+
+        return matching_accts[0]
+
+    def update_manual_asset_value(self, name: str, value: float):
         """
         Update value for manually entered assets.
-
-        fi_id is the `fiLoginId` key in the get_accounts() output
         """
-
-        provider = self._get_provider(fi_id)
-        acct = provider['providerAccounts'][0]
+        acct = self._get_account_by_name(name, 'Other Property')
         url = acct['metaData']['link'][0]['href']
+
         params = {
             "name": acct['name'],
             "type": "OtherPropertyAccount",
@@ -161,7 +174,8 @@ class Mint():
         }
 
         res = self._get_financial_provider_response(url, method='patch', data=params)
-        return res.status_code < 400
+        res.raise_for_status()
+
 
     def _clean_transaction(self, raw_transaction):
         def fix_date(date_str):

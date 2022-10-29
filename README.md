@@ -87,6 +87,12 @@ mint.rename_category(new_category_id, 'specialized boba shop')
 mint.rename_category(new_category_id)
 ```
 
+### Update manual asset value
+```python
+mint.update_manual_asset_value('my HSA account not supported by Mint', 1000)
+```
+If there are multiple manual asset by the same name, this will fail.
+
 ## 2-factor setup
 If the script using Mint is running headlessly, then it is essential to set up 2 factor. One way (but not the only way) to set this one:
 1. Turn on "Authenticator App" 2 factor authentication in Mint (https://accounts-help.intuit.com/app/intuit/1995123)
