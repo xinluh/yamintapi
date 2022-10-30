@@ -10,7 +10,7 @@ A minimalistic wrapper to Mint.com API, designed to be a lean but functional mod
 
 ## Installation
 ```
-python -m pip install git+https://github.com/xinlu/yamintapi.git@master
+python -m pip install git+https://github.com/xinluh/yamintapi.git@master
 ```
 Or add to `requirements.txt` or `pyproject.toml` etc. depending on your package manager.
 
