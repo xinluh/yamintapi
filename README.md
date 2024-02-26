@@ -1,4 +1,7 @@
-# yamintapi: Yet Another Mint.com API
+# !! Deprecated since Mint.com is going away !!
+
+
+## yamintapi: Yet Another Mint.com API
 
 A minimalistic wrapper to Mint.com API, designed to be a lean but functional module that other Python applications can use. It has plenty of editing functionality such as add / change transactions, add tag, add/change custom category, etc.
 
